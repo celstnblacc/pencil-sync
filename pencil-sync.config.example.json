@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "mappings": [
+    {
+      "id": "my-app",
+      "penFile": "./design.pen",
+      "codeDir": "./src",
+      "codeGlobs": ["components/**/*.tsx", "app/**/*.tsx", "*.css"],
+      "penScreens": ["Home", "Dashboard"],
+      "framework": "nextjs",
+      "styling": "tailwind",
+      "direction": "both"
+    }
+  ],
+  "settings": {
+    "debounceMs": 2000,
+    "model": "claude-sonnet-4-6",
+    "maxBudgetUsd": 0.50,
+    "conflictStrategy": "prompt",
+    "stateFile": ".pencil-sync-state.json",
+    "logLevel": "info"
+  }
+}

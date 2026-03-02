@@ -1,0 +1,15 @@
+services:
+  pencil-sync:
+    build: .
+    volumes:
+      # Mount your project directory (adjust path as needed)
+      - ../:/project
+      # Mount config file
+      - ./pencil-sync.config.json:/app/pencil-sync.config.json:ro
+    working_dir: /project
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    # Host networking needed for Pencil MCP server communication
+    network_mode: host
+    restart: unless-stopped
+    command: ["watch", "--config", "/app/pencil-sync.config.json"]

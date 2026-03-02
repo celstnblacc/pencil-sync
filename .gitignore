@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.pencil-sync-state.json
+*.tsbuildinfo

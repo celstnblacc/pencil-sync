@@ -1,0 +1,32 @@
+{
+  "name": "pencil-sync",
+  "version": "0.1.0",
+  "description": "Bidirectional sync between .pen design files and frontend code via Claude CLI",
+  "type": "module",
+  "bin": {
+    "pencil-sync": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "watch": "node dist/index.js watch",
+    "sync": "node dist/index.js sync",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "chokidar": "^4.0.3",
+    "commander": "^13.1.0",
+    "ora": "^8.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}
