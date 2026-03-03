@@ -3,14 +3,18 @@ import { createHash } from "node:crypto";
 import { log } from "./logger.js";
 import { runClaude } from "./claude-runner.js";
 import { buildCodeToPenPrompt } from "./prompt-builder.js";
-import { snapshotPenFile } from "./pen-snapshot.js";
 import { hashFile } from "./state-store.js";
+import type { PenReader } from "./pen-reader.js";
+import { JsonPenReader } from "./pen-reader.js";
 import type { MappingConfig, Settings, SyncResult } from "./types.js";
+
+const defaultPenReader = new JsonPenReader();
 
 export async function syncCodeToPen(
   mapping: MappingConfig,
   settings: Settings,
   changedFiles: string[],
+  penReader: PenReader = defaultPenReader,
 ): Promise<SyncResult> {
   log.sync("code-to-pen", mapping.id, `Starting code → design sync (${changedFiles.length} files changed)`);
 
@@ -33,6 +37,10 @@ export async function syncCodeToPen(
     prompt,
     model: settings.model,
     cwd: mapping.codeDir,
+    ...(settings.mcpConfigPath && {
+      allowedTools: "Edit,Write,Read,Glob,Grep,mcp__pencil__batch_get,mcp__pencil__batch_design,mcp__pencil__set_variables,mcp__pencil__get_screenshot",
+      mcpConfigPath: settings.mcpConfigPath,
+    }),
   });
 
   if (!result.success) {
@@ -53,7 +61,7 @@ export async function syncCodeToPen(
     const penRaw = await readFile(mapping.penFile, "utf-8");
     const afterHash = createHash("sha256").update(penRaw).digest("hex");
     penChanged = beforeHash !== afterHash;
-    const snapshot = snapshotPenFile(mapping.penFile, penRaw);
+    const snapshot = await penReader.readSnapshot(mapping.penFile);
     if (snapshot === null) {
       log.error("Pen file could not be parsed after sync");
       return {

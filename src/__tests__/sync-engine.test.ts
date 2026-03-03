@@ -234,6 +234,26 @@ describe("SyncEngine", () => {
       expect(mockedRunClaude).toHaveBeenCalled();
     });
 
+    it("auto-merge passes MCP tools when mcpConfigPath is set", async () => {
+      config.settings.mcpConfigPath = "/path/to/mcp.json";
+      await withStrategy("auto-merge");
+      await setupConflict();
+
+      const result = await engine.syncMapping(mapping, "pen-changed");
+      expect(result.success).toBe(true);
+
+      // Find the runClaude call for auto-merge (not the initial pen-to-code sync)
+      const autoMergeCall = mockedRunClaude.mock.calls.find(
+        (call) => call[0].allowedTools?.includes("mcp__pencil__batch_get"),
+      );
+      expect(autoMergeCall).toBeDefined();
+      expect(autoMergeCall![0].mcpConfigPath).toBe("/path/to/mcp.json");
+      expect(autoMergeCall![0].allowedTools).toContain("mcp__pencil__batch_design");
+
+      // Clean up
+      delete config.settings.mcpConfigPath;
+    });
+
     it("auto-merge returns error when Claude fails", async () => {
       await withStrategy("auto-merge");
 

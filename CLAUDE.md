@@ -26,6 +26,7 @@ src/
   sync-engine.ts       Orchestrates pen→code and code→pen sync
   pen-to-code.ts       Reads .pen snapshots, applies color fast path or spawns Claude
   code-to-pen.ts       Detects code changes, spawns Claude to update .pen
+  pen-reader.ts        PenReader interface + JsonPenReader for .pen snapshot reading
   claude-runner.ts     Spawns Claude CLI, parses token usage
   prompt-builder.ts    Builds prompts from templates + snapshots
   config.ts            Loads and validates pencil-sync.config.json

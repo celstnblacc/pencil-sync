@@ -7,6 +7,8 @@ export interface ClaudeRunOptions {
   model: string;
   maxTokens?: number;
   cwd?: string;
+  allowedTools?: string;
+  mcpConfigPath?: string;
 }
 
 // Model pricing per million tokens (input/output USD)
@@ -60,8 +62,12 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
     "--max-turns",
     "3",
     "--allowedTools",
-    "Edit,Write,Read,Glob,Grep",
+    options.allowedTools ?? "Edit,Write,Read,Glob,Grep",
   ];
+
+  if (options.mcpConfigPath) {
+    args.push("--mcp-config", options.mcpConfigPath);
+  }
 
   log.debug(`Spawning: claude ${args.slice(0, 4).join(" ")}...`);
 

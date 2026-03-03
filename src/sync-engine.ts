@@ -7,6 +7,8 @@ import { detectConflict, isConflict } from "./conflict-detector.js";
 import { syncPenToCode } from "./pen-to-code.js";
 import { syncCodeToPen } from "./code-to-pen.js";
 import { runClaude, estimateCost, estimateInputTokens, MODEL_PRICING } from "./claude-runner.js";
+import type { PenReader } from "./pen-reader.js";
+import { JsonPenReader } from "./pen-reader.js";
 import { buildConflictPrompt, buildCodeToPenPrompt, buildPenToCodePrompt } from "./prompt-builder.js";
 import { snapshotPenFile, diffPenSnapshots } from "./pen-snapshot.js";
 import type {
@@ -23,11 +25,13 @@ const ASK_USER_TIMEOUT_MS = 30_000;
 export class SyncEngine {
   private lockManager: LockManager;
   private stateStore: StateStore;
+  private penReader: PenReader;
   private cumulativeSpendUsd = 0;
 
-  constructor(private config: PencilSyncConfig) {
+  constructor(private config: PencilSyncConfig, penReader?: PenReader) {
     this.stateStore = new StateStore(config.settings.stateFile);
     this.lockManager = new LockManager(config.settings.debounceMs);
+    this.penReader = penReader ?? new JsonPenReader();
   }
 
   async initialize(): Promise<void> {
@@ -171,7 +175,7 @@ export class SyncEngine {
     if (direction === "pen-to-code") {
       return syncPenToCode(mapping, this.config.settings, previousState);
     } else {
-      return syncCodeToPen(mapping, this.config.settings, conflict.changedCodeFiles);
+      return syncCodeToPen(mapping, this.config.settings, conflict.changedCodeFiles, this.penReader);
     }
   }
 
@@ -267,6 +271,10 @@ export class SyncEngine {
       prompt,
       model: this.config.settings.model,
       cwd: mapping.codeDir,
+      ...(this.config.settings.mcpConfigPath && {
+        allowedTools: "Edit,Write,Read,Glob,Grep,mcp__pencil__batch_get,mcp__pencil__batch_design,mcp__pencil__set_variables,mcp__pencil__get_screenshot",
+        mcpConfigPath: this.config.settings.mcpConfigPath,
+      }),
     });
 
     if (!result.success) {

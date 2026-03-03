@@ -128,6 +128,41 @@ describe("syncCodeToPen", () => {
     expect(result.tokenUsage).toEqual({ input: 500, output: 100 });
   });
 
+  it("passes MCP tools to runClaude when mcpConfigPath is set", async () => {
+    const mcpSettings = { ...settings, mcpConfigPath: "/path/to/mcp.json" };
+
+    mockedRunClaude.mockResolvedValue({
+      success: true,
+      stdout: "Done",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await syncCodeToPen(mapping, mcpSettings, ["app.tsx"]);
+
+    const call = mockedRunClaude.mock.calls[0][0];
+    expect(call.allowedTools).toContain("mcp__pencil__batch_get");
+    expect(call.allowedTools).toContain("mcp__pencil__batch_design");
+    expect(call.allowedTools).toContain("mcp__pencil__set_variables");
+    expect(call.allowedTools).toContain("mcp__pencil__get_screenshot");
+    expect(call.mcpConfigPath).toBe("/path/to/mcp.json");
+  });
+
+  it("does not pass MCP tools when mcpConfigPath is not set", async () => {
+    mockedRunClaude.mockResolvedValue({
+      success: true,
+      stdout: "Done",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await syncCodeToPen(mapping, settings, ["app.tsx"]);
+
+    const call = mockedRunClaude.mock.calls[0][0];
+    expect(call.allowedTools).toBeUndefined();
+    expect(call.mcpConfigPath).toBeUndefined();
+  });
+
   it("returns penSnapshot after successful sync", async () => {
     // Write a valid .pen file with nodes
     const penContent = JSON.stringify({
