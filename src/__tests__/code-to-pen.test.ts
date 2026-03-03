@@ -112,4 +112,28 @@ describe("syncCodeToPen", () => {
     const result = await syncCodeToPen(mapping, settings, ["app.tsx"]);
     expect(result.tokenUsage).toEqual({ input: 500, output: 100 });
   });
+
+  it("returns penSnapshot after successful sync", async () => {
+    // Write a valid .pen file with nodes
+    const penContent = JSON.stringify({
+      children: [
+        { id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000", cornerRadius: 8 },
+      ],
+    });
+    await writeFile(join(dir, "design.pen"), penContent);
+
+    mockedRunClaude.mockResolvedValue({
+      success: true,
+      stdout: "Done",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const result = await syncCodeToPen(mapping, settings, ["app.tsx"]);
+
+    expect(result.success).toBe(true);
+    expect(result.penSnapshot).toBeDefined();
+    expect(result.penSnapshot!["btn1"]).toBeDefined();
+    expect(result.penSnapshot!["btn1"].fill).toBe("#ff0000");
+  });
 });

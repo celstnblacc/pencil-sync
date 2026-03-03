@@ -9,14 +9,10 @@ vi.mock("../claude-runner.js", () => ({
   runClaude: vi.fn(),
 }));
 
-// Partially mock prompt-builder — keep real snapshotPenFile and diffPenSnapshots
-vi.mock("../prompt-builder.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../prompt-builder.js")>();
-  return {
-    ...original,
-    buildPenToCodePrompt: vi.fn().mockResolvedValue("test prompt"),
-  };
-});
+// Mock prompt-builder (pen-to-code now imports snapshot fns from pen-snapshot directly)
+vi.mock("../prompt-builder.js", () => ({
+  buildPenToCodePrompt: vi.fn().mockResolvedValue("test prompt"),
+}));
 
 const { syncPenToCode } = await import("../pen-to-code.js");
 const { runClaude } = await import("../claude-runner.js");
@@ -49,6 +45,17 @@ function makeCssWithThemes(varName: string, rgb: string): string {
 
 function makeSnapshot(nodeId: string, props: Record<string, string | number>): PenNodeSnapshot {
   return { [nodeId]: props };
+}
+
+function makePreviousState(penSnapshot: PenNodeSnapshot): MappingState {
+  return {
+    mappingId: "test",
+    penHash: "old",
+    codeHashes: {},
+    lastSyncTimestamp: Date.now(),
+    lastSyncDirection: "pen-to-code",
+    penSnapshot,
+  };
 }
 
 describe("syncPenToCode", () => {
@@ -102,15 +109,9 @@ describe("syncPenToCode", () => {
         makeCssWithThemes("accent-submit", "172 255 204"),
       );
 
-      // Previous state had the old color
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#acffcc" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#acffcc" }),
+      );
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -136,14 +137,9 @@ describe("syncPenToCode", () => {
         makeCssWithThemes("accent-submit", "64 20 23"),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#401417ff" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#401417ff" }),
+      );
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -166,14 +162,9 @@ describe("syncPenToCode", () => {
         makeCssWithThemes("accent-submit", "0 255 0"),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
+      );
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -193,14 +184,9 @@ describe("syncPenToCode", () => {
         makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
+      );
 
       const result = await syncPenToCode(mappingNoCss, settings, previousState);
 
@@ -501,6 +487,125 @@ describe("syncPenToCode", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Failed to read .pen file");
+    });
+  });
+
+  // ── M5: Shorthand hex support ──
+
+  describe("shorthand hex support", () => {
+    it("expands #RGB shorthand to full hex for replacement", async () => {
+      // .pen file with shorthand hex #f00 (red)
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#f00" }]),
+      );
+
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        makeCssWithThemes("accent-submit", "0 255 0"),
+      );
+
+      // Previous state had old color using shorthand
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#0f0" }),
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      const css = await readFile(join(dir, "code", "app", "globals.css"), "utf-8");
+      // #f00 expands to #ff0000 → 255 0 0
+      expect(css).toContain("255 0 0");
+      expect(css).not.toContain("0 255 0");
+    });
+  });
+
+  // ── C1: Color collision warning ──
+
+  describe("color collision detection", () => {
+    it("replaces all variables sharing the same RGB value", async () => {
+      // Two different design nodes that both had the same old fill color
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([
+          { id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" },
+          { id: "bg1", name: "pageBg", type: "frame", fill: "#aabbcc" },
+        ]),
+      );
+
+      // CSS has TWO different variables with the SAME RGB value
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        `:root {
+  --color-accent: 0 255 0;
+  --color-bg-main: 0 255 0;
+}
+`,
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: {
+          btn1: { name: "submitBtn", type: "frame", fill: "#00ff00" },
+          bg1: { name: "pageBg", type: "frame", fill: "#aabbcc" },
+        },
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      const css = await readFile(join(dir, "code", "app", "globals.css"), "utf-8");
+      // Both variables should have been replaced (collision)
+      expect(css).toContain("255 0 0");
+      expect(css).not.toContain("0 255 0");
+    });
+  });
+
+  // ── C3: Graceful handling when old RGB not found ──
+
+  describe("fill change error handling", () => {
+    it("succeeds gracefully when old RGB is not found in CSS", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]),
+      );
+
+      // CSS does NOT contain the old RGB value
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        `:root {
+  --color-accent: 99 99 99;
+}
+`,
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
+      };
+
+      // Should succeed (non-blocking) even though the old RGB is not in the CSS
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      // No files changed since old RGB wasn't found
+      expect(result.filesChanged).toEqual([]);
     });
   });
 });

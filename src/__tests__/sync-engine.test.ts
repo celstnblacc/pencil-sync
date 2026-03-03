@@ -18,16 +18,26 @@ vi.mock("../claude-runner.js", async (importOriginal) => {
   };
 });
 
-// Mock prompt-builder (include snapshot/diff exports used by pen-to-code)
-// Return a non-fill diff so Claude CLI gets called for pen-to-code syncs
+// Mock prompt-builder
 vi.mock("../prompt-builder.js", () => ({
   buildPenToCodePrompt: vi.fn().mockResolvedValue("pen-to-code prompt"),
   buildCodeToPenPrompt: vi.fn().mockResolvedValue("code-to-pen prompt"),
   buildConflictPrompt: vi.fn().mockResolvedValue("conflict prompt"),
+}));
+
+// Mock pen-snapshot (used directly by pen-to-code.ts and code-to-pen.ts)
+// Return a non-fill diff so Claude CLI gets called for pen-to-code syncs
+vi.mock("../pen-snapshot.js", () => ({
   snapshotPenFile: vi.fn().mockReturnValue({}),
   diffPenSnapshots: vi.fn().mockReturnValue([
     { nodeId: "t1", nodeName: "title", prop: "content", oldValue: "old", newValue: "new" },
   ]),
+  formatDiffForPrompt: vi.fn().mockReturnValue(""),
+}));
+
+vi.mock("../utils.js", () => ({
+  getCssStyleFile: vi.fn().mockReturnValue(undefined),
+  validatePathWithin: vi.fn().mockImplementation((_base: string, file: string) => file),
 }));
 
 const { SyncEngine } = await import("../sync-engine.js");
@@ -307,6 +317,34 @@ describe("SyncEngine", () => {
       const result = await engine.syncMapping(mapping, "pen-changed");
       expect(result.success).toBe(false);
       expect(result.error).toContain("Budget");
+    });
+  });
+
+  describe("non-interactive mode", () => {
+    it("skips user prompt and defaults to skip when stdin is not a TTY", async () => {
+      // Use "prompt" strategy (default) which triggers askUser
+      config.settings.conflictStrategy = "prompt";
+      engine = new SyncEngine(config);
+      await engine.initialize();
+
+      // Setup conflict
+      await engine.syncMapping(mapping, "pen-changed");
+      engine.getLockManager().forceRelease(mapping.id);
+      await writeFile(join(dir, "design.pen"), JSON.stringify({ children: [{ id: "changed" }] }));
+      await writeFile(join(dir, "code", "app.tsx"), "modified code");
+
+      // Mock stdin.isTTY = false (non-interactive)
+      const originalIsTTY = process.stdin.isTTY;
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+      try {
+        const result = await engine.syncMapping(mapping, "pen-changed");
+        // Should succeed (skip) without hanging on readline
+        expect(result.success).toBe(true);
+        expect(result.filesChanged).toEqual([]);
+      } finally {
+        Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
+      }
     });
   });
 });

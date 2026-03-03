@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from "chokidar";
 import { join } from "node:path";
 import { log } from "./logger.js";
 import { SyncEngine } from "./sync-engine.js";
+import { getCssStyleFile } from "./utils.js";
 import type { MappingConfig, PencilSyncConfig } from "./types.js";
 
 export class Watcher {
@@ -38,7 +39,7 @@ export class Watcher {
   }
 
   private printMappingInfo(mapping: MappingConfig): void {
-    const cssFile = (mapping.styleFiles ?? []).find((f) => f.endsWith(".css"));
+    const cssFile = getCssStyleFile(mapping);
     const hasFastPath = !!cssFile;
 
     log.info("");

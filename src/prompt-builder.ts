@@ -1,11 +1,15 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { MappingConfig, PenNodeSnapshot } from "./types.js";
+import type { MappingConfig, PenDiffEntry } from "./types.js";
+import { formatDiffForPrompt } from "./pen-snapshot.js";
+import { validatePathWithin } from "./utils.js";
 import { log } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(__dirname, "..", "prompts");
+
+const MAX_STYLE_FILE_BYTES = 50 * 1024; // 50KB
 
 async function loadTemplate(name: string): Promise<string> {
   const path = join(PROMPTS_DIR, `${name}.md`);
@@ -29,9 +33,23 @@ async function loadStyleFiles(mapping: MappingConfig): Promise<string> {
 
   const sections: string[] = [];
   for (const filePath of files) {
-    const fullPath = join(mapping.codeDir, filePath);
+    let fullPath: string;
     try {
-      const content = await readFile(fullPath, "utf-8");
+      fullPath = validatePathWithin(mapping.codeDir, filePath);
+    } catch (err) {
+      log.warn(`Skipping style file with invalid path: ${err}`);
+      continue;
+    }
+
+    try {
+      const fileStat = await stat(fullPath);
+      let content = await readFile(fullPath, "utf-8");
+
+      if (fileStat.size > MAX_STYLE_FILE_BYTES) {
+        content = content.slice(0, MAX_STYLE_FILE_BYTES) + "\n/* ... truncated ... */";
+        log.warn(`Style file ${filePath} exceeds 50KB, truncated for prompt`);
+      }
+
       const relPath = relative(mapping.codeDir, fullPath);
       sections.push(`### \`${relPath}\`\n\`\`\`\n${content}\n\`\`\``);
     } catch (err) {
@@ -41,110 +59,6 @@ async function loadStyleFiles(mapping: MappingConfig): Promise<string> {
 
   if (sections.length === 0) return "";
   return `\n## Current Style Files\n\n${sections.join("\n\n")}\n`;
-}
-
-// ── .pen file reading and diffing ──
-
-interface PenNode {
-  id?: string;
-  name?: string;
-  type?: string;
-  fill?: string;
-  content?: string;
-  fontFamily?: string;
-  fontSize?: number;
-  fontWeight?: string;
-  cornerRadius?: number;
-  children?: PenNode[];
-  [key: string]: unknown;
-}
-
-const TRACKED_PROPS = ["fill", "content", "fontSize", "fontWeight", "fontFamily", "cornerRadius"] as const;
-
-function flattenPenNodes(node: PenNode): PenNodeSnapshot {
-  const snapshot: PenNodeSnapshot = {};
-
-  if (node.id) {
-    const props: Record<string, string | number> = {};
-    if (node.name) props.name = node.name;
-    if (node.type) props.type = node.type;
-    for (const prop of TRACKED_PROPS) {
-      if (node[prop] !== undefined && node[prop] !== null) {
-        props[prop] = node[prop] as string | number;
-      }
-    }
-    if (Object.keys(props).length > 1) { // at least name/type + one visual prop
-      snapshot[node.id] = props;
-    }
-  }
-
-  if (node.children && Array.isArray(node.children)) {
-    for (const child of node.children) {
-      Object.assign(snapshot, flattenPenNodes(child));
-    }
-  }
-
-  return snapshot;
-}
-
-export function snapshotPenFile(penFile: string, raw: string): PenNodeSnapshot {
-  try {
-    const pen = JSON.parse(raw);
-    const snapshot: PenNodeSnapshot = {};
-    for (const child of (pen.children ?? [])) {
-      Object.assign(snapshot, flattenPenNodes(child));
-    }
-    return snapshot;
-  } catch (err) {
-    log.error(`Failed to parse .pen file: ${err}`);
-    return {};
-  }
-}
-
-export interface PenDiffEntry {
-  nodeId: string;
-  nodeName: string;
-  prop: string;
-  oldValue: string | number;
-  newValue: string | number;
-}
-
-export function diffPenSnapshots(
-  oldSnap: PenNodeSnapshot,
-  newSnap: PenNodeSnapshot,
-): PenDiffEntry[] {
-  const diffs: PenDiffEntry[] = [];
-
-  for (const [nodeId, newProps] of Object.entries(newSnap)) {
-    const oldProps = oldSnap[nodeId];
-    if (!oldProps) continue; // new node — skip for now
-
-    for (const prop of TRACKED_PROPS) {
-      const oldVal = oldProps[prop];
-      const newVal = newProps[prop];
-      if (oldVal !== undefined && newVal !== undefined && String(oldVal) !== String(newVal)) {
-        diffs.push({
-          nodeId,
-          nodeName: String(newProps.name ?? nodeId),
-          prop,
-          oldValue: oldVal,
-          newValue: newVal,
-        });
-      }
-    }
-  }
-
-  return diffs;
-}
-
-function formatDiffForPrompt(diffs: PenDiffEntry[]): string {
-  if (diffs.length === 0) return "";
-
-  const lines = diffs.map(d =>
-    `- **${d.nodeName}** (${d.nodeId}): \`${d.prop}\` changed from \`${d.oldValue}\` → \`${d.newValue}\``
-  );
-
-  return `\n## Design Changes Detected\n\n${lines.join("\n")}\n`;
 }
 
 // ── Prompt builders ──

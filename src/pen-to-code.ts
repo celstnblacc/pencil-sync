@@ -1,18 +1,24 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { log } from "./logger.js";
 import { runClaude } from "./claude-runner.js";
-import { buildPenToCodePrompt, snapshotPenFile, diffPenSnapshots } from "./prompt-builder.js";
-import type { PenDiffEntry } from "./prompt-builder.js";
+import { buildPenToCodePrompt } from "./prompt-builder.js";
+import { snapshotPenFile, diffPenSnapshots } from "./pen-snapshot.js";
+import { getCssStyleFile, validatePathWithin } from "./utils.js";
+import type { PenDiffEntry, FillChangeResult, MappingConfig, Settings, SyncResult, MappingState } from "./types.js";
 import { hashCodeDir, diffHashes } from "./state-store.js";
-import type { MappingConfig, Settings, SyncResult, MappingState } from "./types.js";
 
 /**
- * Convert a hex color (#RRGGBB or #RRGGBBAA) to space-separated RGB channels.
- * Returns e.g. "34 72 70" for "#224846".
+ * Convert a hex color (#RRGGBB, #RRGGBBAA, or shorthand #RGB/#RGBA) to space-separated RGB channels.
+ * Returns e.g. "34 72 70" for "#224846", or "" if invalid.
  */
 function hexToRgbChannels(hex: string): string {
-  const clean = hex.replace(/^#/, "");
+  let clean = hex.replace(/^#/, "");
+
+  // Expand shorthand: #RGB → #RRGGBB, #RGBA → #RRGGBBAA
+  if (clean.length === 3 || clean.length === 4) {
+    clean = clean.split("").map(c => c + c).join("");
+  }
+
   // Take first 6 chars (ignore alpha if present)
   const r = parseInt(clean.slice(0, 2), 16);
   const g = parseInt(clean.slice(2, 4), 16);
@@ -27,24 +33,40 @@ function hexToRgbChannels(hex: string): string {
  *
  * Strategy: For each fill change, find all CSS variable declarations whose value
  * matches the OLD RGB and replace with the NEW RGB. This updates ALL theme blocks.
+ *
+ * Returns structured FillChangeResult with both filesChanged and errors.
  */
+function recordError(result: FillChangeResult, msg: string, level: "warn" | "error" = "warn"): void {
+  result.errors.push(msg);
+  log[level](msg);
+}
+
 async function applyFillChanges(
   mapping: MappingConfig,
   fillDiffs: PenDiffEntry[],
-): Promise<string[]> {
-  const cssFile = (mapping.styleFiles ?? []).find((f) => f.endsWith(".css"));
+): Promise<FillChangeResult> {
+  const result: FillChangeResult = { filesChanged: [], errors: [] };
+
+  const cssFile = getCssStyleFile(mapping);
   if (!cssFile) {
-    log.warn("No CSS file in styleFiles — cannot apply fill changes directly");
-    return [];
+    recordError(result, "No CSS file in styleFiles — cannot apply fill changes directly");
+    return result;
   }
 
-  const cssPath = join(mapping.codeDir, cssFile);
+  let cssPath: string;
+  try {
+    cssPath = validatePathWithin(mapping.codeDir, cssFile);
+  } catch (err) {
+    recordError(result, `Invalid CSS file path: ${err}`);
+    return result;
+  }
+
   let css: string;
   try {
     css = await readFile(cssPath, "utf-8");
   } catch (err) {
-    log.error(`Failed to read CSS file ${cssPath}: ${err}`);
-    return [];
+    recordError(result, `Failed to read CSS file ${cssPath}: ${err}`, "error");
+    return result;
   }
 
   let modified = false;
@@ -54,7 +76,7 @@ async function applyFillChanges(
     const newRgb = hexToRgbChannels(String(diff.newValue));
 
     if (!oldRgb || !newRgb) {
-      log.warn(`Could not convert hex values for ${diff.nodeName}.fill: ${diff.oldValue} → ${diff.newValue}`);
+      recordError(result, `Could not convert hex values for ${diff.nodeName}.fill: ${diff.oldValue} → ${diff.newValue}`);
       continue;
     }
 
@@ -68,25 +90,42 @@ async function applyFillChanges(
       "g",
     );
 
+    // Detect color collision — multiple distinct variable names sharing the same RGB value
+    const allMatches = [...css.matchAll(pattern)];
+    const matchedVarNames = new Set(
+      allMatches.map(m => {
+        // Extract the variable name from the captured group (e.g. "--color-foo: ")
+        const varDecl = m[1].trim();
+        return varDecl.replace(/:\s*$/, "");
+      }),
+    );
+
+    if (matchedVarNames.size > 1) {
+      log.warn(
+        `Color collision: RGB "${oldRgb}" matches ${matchedVarNames.size} different variables: ${[...matchedVarNames].join(", ")}. All will be replaced with "${newRgb}".`,
+      );
+    }
+
     const newCss = css.replace(pattern, `$1${newRgb}$2`);
 
     if (newCss !== css) {
-      const matchCount = (css.match(pattern) ?? []).length;
-      log.info(`  ✓ ${diff.nodeName}.fill: replaced "${oldRgb}" → "${newRgb}" in ${matchCount} theme block(s)`);
+      const matchCount = allMatches.length;
+      const varList = [...matchedVarNames].join(", ");
+      log.info(`  ✓ ${diff.nodeName}.fill: replaced "${oldRgb}" → "${newRgb}" in ${matchCount} declaration(s) [${varList}]`);
       css = newCss;
       modified = true;
     } else {
-      log.warn(`  ✗ ${diff.nodeName}.fill: old RGB "${oldRgb}" not found in ${cssFile}`);
+      recordError(result, `${diff.nodeName}.fill: old RGB "${oldRgb}" not found in ${cssFile}`);
     }
   }
 
   if (modified) {
     await writeFile(cssPath, css);
     log.success(`Updated ${cssFile} with color changes`);
-    return [cssFile];
+    result.filesChanged.push(cssFile);
   }
 
-  return [];
+  return result;
 }
 
 function escapeRegex(str: string): string {
@@ -143,8 +182,12 @@ export async function syncPenToCode(
   // ── Fast path: apply fill/color changes directly ──
   if (fillDiffs.length > 0) {
     log.info(`Applying ${fillDiffs.length} color change(s) directly (no Claude CLI needed)`);
-    const colorFiles = await applyFillChanges(mapping, fillDiffs);
-    allFilesChanged.push(...colorFiles);
+    const fillResult = await applyFillChanges(mapping, fillDiffs);
+    allFilesChanged.push(...fillResult.filesChanged);
+    // Log fill errors as warnings (non-blocking)
+    for (const err of fillResult.errors) {
+      log.warn(`Fill change issue: ${err}`);
+    }
   }
 
   // ── Slow path: delegate non-fill changes to Claude CLI ──

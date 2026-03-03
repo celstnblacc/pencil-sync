@@ -1,6 +1,8 @@
+import { readFile } from "node:fs/promises";
 import { log } from "./logger.js";
 import { runClaude } from "./claude-runner.js";
 import { buildCodeToPenPrompt } from "./prompt-builder.js";
+import { snapshotPenFile } from "./pen-snapshot.js";
 import { hashFile } from "./state-store.js";
 import type { MappingConfig, Settings, SyncResult } from "./types.js";
 
@@ -49,6 +51,15 @@ export async function syncCodeToPen(
   const afterHash = await hashFile(mapping.penFile);
   const penChanged = beforeHash !== afterHash;
 
+  // Read and snapshot the .pen file after sync for state persistence
+  let penSnapshot;
+  try {
+    const penRaw = await readFile(mapping.penFile, "utf-8");
+    penSnapshot = snapshotPenFile(mapping.penFile, penRaw);
+  } catch (err) {
+    log.warn(`Could not snapshot .pen file after code-to-pen sync: ${err}`);
+  }
+
   log.success(`Code-to-pen sync complete for ${mapping.id}`);
 
   return {
@@ -57,5 +68,6 @@ export async function syncCodeToPen(
     mappingId: mapping.id,
     filesChanged: penChanged ? [mapping.penFile] : [],
     tokenUsage: result.tokenUsage,
+    penSnapshot,
   };
 }

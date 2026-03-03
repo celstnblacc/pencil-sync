@@ -10,10 +10,13 @@ import { buildConflictPrompt } from "./prompt-builder.js";
 import type {
   PencilSyncConfig,
   MappingConfig,
+  MappingState,
   SyncResult,
   ConflictInfo,
   TokenUsage,
 } from "./types.js";
+
+const ASK_USER_TIMEOUT_MS = 30_000;
 
 export class SyncEngine {
   private lockManager: LockManager;
@@ -99,7 +102,7 @@ export class SyncEngine {
       const conflict = await detectConflict(mapping, previousState);
 
       if (isConflict(conflict) && mapping.direction === "both") {
-        const result = await this.handleConflict(mapping, conflict);
+        const result = await this.handleConflict(mapping, conflict, previousState);
         this.trackSpend(result.tokenUsage);
         if (result.success) {
           await this.stateStore.updateMappingState(mapping, result.direction, result.penSnapshot);
@@ -111,28 +114,28 @@ export class SyncEngine {
       let result: SyncResult;
 
       if (manualDirection) {
-        result = await this.executeSyncDirection(mapping, manualDirection, conflict);
+        result = await this.executeSyncDirection(mapping, manualDirection, conflict, previousState);
       } else if (triggerDirection === "pen-changed") {
         if (mapping.direction === "code-to-pen") {
           log.debug(`Ignoring .pen change for code-to-pen mapping ${mapping.id}`);
           return { success: true, direction: "code-to-pen", mappingId: mapping.id, filesChanged: [] };
         }
-        result = await this.executeSyncDirection(mapping, "pen-to-code", conflict);
+        result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
       } else if (triggerDirection === "code-changed") {
         if (mapping.direction === "pen-to-code") {
           log.debug(`Ignoring code change for pen-to-code mapping ${mapping.id}`);
           return { success: true, direction: "pen-to-code", mappingId: mapping.id, filesChanged: [] };
         }
-        result = await this.executeSyncDirection(mapping, "code-to-pen", conflict);
+        result = await this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState);
       } else {
         // Manual with auto direction
         if (conflict.penChanged && !conflict.codeChanged) {
-          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict);
+          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
         } else if (conflict.codeChanged && !conflict.penChanged) {
-          result = await this.executeSyncDirection(mapping, "code-to-pen", conflict);
+          result = await this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState);
         } else {
           // Default to pen-to-code: design is the source of truth when both sides changed or neither changed
-          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict);
+          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
         }
       }
 
@@ -153,9 +156,9 @@ export class SyncEngine {
     mapping: MappingConfig,
     direction: "pen-to-code" | "code-to-pen",
     conflict: ConflictInfo,
+    previousState: MappingState | undefined,
   ): Promise<SyncResult> {
     if (direction === "pen-to-code") {
-      const previousState = this.stateStore.getMappingState(mapping.id);
       return syncPenToCode(mapping, this.config.settings, previousState);
     } else {
       return syncCodeToPen(mapping, this.config.settings, conflict.changedCodeFiles);
@@ -165,6 +168,7 @@ export class SyncEngine {
   private async handleConflict(
     mapping: MappingConfig,
     conflict: ConflictInfo,
+    previousState: MappingState | undefined,
   ): Promise<SyncResult> {
     const strategy = this.config.settings.conflictStrategy;
 
@@ -172,17 +176,17 @@ export class SyncEngine {
 
     switch (strategy) {
       case "pen-wins":
-        return this.executeSyncDirection(mapping, "pen-to-code", conflict);
+        return this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
 
       case "code-wins":
-        return this.executeSyncDirection(mapping, "code-to-pen", conflict);
+        return this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState);
 
       case "auto-merge":
         return this.autoMergeConflict(mapping, conflict);
 
       case "prompt":
       default:
-        return this.promptUserForResolution(mapping, conflict);
+        return this.promptUserForResolution(mapping, conflict, previousState);
     }
   }
 
@@ -222,6 +226,7 @@ export class SyncEngine {
   private async promptUserForResolution(
     mapping: MappingConfig,
     conflict: ConflictInfo,
+    previousState: MappingState | undefined,
   ): Promise<SyncResult> {
     log.warn(`\nConflict detected for mapping "${mapping.id}":`);
     log.warn(`  .pen file changed: ${conflict.penChanged}`);
@@ -236,9 +241,9 @@ export class SyncEngine {
 
     switch (answer.trim().toLowerCase()) {
       case "p":
-        return this.executeSyncDirection(mapping, "pen-to-code", conflict);
+        return this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
       case "c":
-        return this.executeSyncDirection(mapping, "code-to-pen", conflict);
+        return this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState);
       case "m":
         return this.autoMergeConflict(mapping, conflict);
       case "s":
@@ -266,10 +271,28 @@ export class SyncEngine {
   }
 }
 
+/**
+ * C4: Non-interactive stdin guard + timeout.
+ * Returns empty string if stdin is not a TTY (non-interactive mode) or on timeout.
+ */
 function askUser(question: string): Promise<string> {
+  // Guard: non-interactive environments (CI, piped stdin, etc.)
+  if (!process.stdin.isTTY) {
+    log.warn("Non-interactive mode detected (stdin is not a TTY), skipping user prompt");
+    return Promise.resolve("");
+  }
+
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+
   return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      log.warn(`User prompt timed out after ${ASK_USER_TIMEOUT_MS / 1000}s, defaulting to skip`);
+      rl.close();
+      resolve("");
+    }, ASK_USER_TIMEOUT_MS);
+
     rl.question(question, (answer) => {
+      clearTimeout(timeout);
       rl.close();
       resolve(answer);
     });

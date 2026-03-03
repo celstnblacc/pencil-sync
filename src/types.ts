@@ -41,7 +41,7 @@ export interface MappingState {
   penHash: string;
   codeHashes: Record<string, string>;
   lastSyncTimestamp: number;
-  lastSyncDirection: SyncDirection | null;
+  lastSyncDirection: SyncDirection;
   penSnapshot?: PenNodeSnapshot;
 }
 
@@ -78,6 +78,19 @@ export interface ConflictInfo {
   penChanged: boolean;
   codeChanged: boolean;
   changedCodeFiles: string[];
+}
+
+export interface PenDiffEntry {
+  nodeId: string;
+  nodeName: string;
+  prop: string;
+  oldValue: string | number;
+  newValue: string | number;
+}
+
+export interface FillChangeResult {
+  filesChanged: string[];
+  errors: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
