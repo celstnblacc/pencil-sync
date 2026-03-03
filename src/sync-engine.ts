@@ -6,7 +6,7 @@ import { detectConflict, isConflict } from "./conflict-detector.js";
 import { syncPenToCode } from "./pen-to-code.js";
 import { syncCodeToPen } from "./code-to-pen.js";
 import { runClaude, estimateCost, estimateInputTokens, MODEL_PRICING } from "./claude-runner.js";
-import { buildConflictPrompt, buildPenToCodePrompt, buildCodeToPenPrompt } from "./prompt-builder.js";
+import { buildConflictPrompt } from "./prompt-builder.js";
 import type {
   PencilSyncConfig,
   MappingConfig,
@@ -71,7 +71,6 @@ export class SyncEngine {
     triggerDirection: "pen-changed" | "code-changed" | "manual",
     manualDirection?: "pen-to-code" | "code-to-pen",
   ): Promise<SyncResult> {
-    // Budget check (no prompt yet, just check if already exhausted)
     const budgetError = this.checkBudget(mapping);
     if (budgetError) {
       log.warn(`Budget limit reached for ${mapping.id}: ${budgetError}`);
@@ -99,14 +98,16 @@ export class SyncEngine {
       const previousState = this.stateStore.getMappingState(mapping.id);
       const conflict = await detectConflict(mapping, previousState);
 
-      // Handle conflicts
       if (isConflict(conflict) && mapping.direction === "both") {
         const result = await this.handleConflict(mapping, conflict);
         this.trackSpend(result.tokenUsage);
+        if (result.success) {
+          await this.stateStore.updateMappingState(mapping, result.direction, result.penSnapshot);
+          this.lockManager.setLastSyncDirection(mapping.id, result.direction);
+        }
         return result;
       }
 
-      // Determine sync direction
       let result: SyncResult;
 
       if (manualDirection) {
@@ -130,15 +131,13 @@ export class SyncEngine {
         } else if (conflict.codeChanged && !conflict.penChanged) {
           result = await this.executeSyncDirection(mapping, "code-to-pen", conflict);
         } else {
-          // Both or neither changed — default to pen-to-code
+          // Default to pen-to-code: design is the source of truth when both sides changed or neither changed
           result = await this.executeSyncDirection(mapping, "pen-to-code", conflict);
         }
       }
 
-      // Track spend
       this.trackSpend(result.tokenUsage);
 
-      // Update state on success
       if (result.success) {
         await this.stateStore.updateMappingState(mapping, result.direction, result.penSnapshot);
         this.lockManager.setLastSyncDirection(mapping.id, result.direction);

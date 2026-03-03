@@ -3,8 +3,9 @@
 import { Command } from "commander";
 import ora from "ora";
 import chalk from "chalk";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, writeFile, access } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { setLogLevel, log } from "./logger.js";
 import { SyncEngine } from "./sync-engine.js";
@@ -13,14 +14,23 @@ import type { PencilSyncConfig, SyncDirection } from "./types.js";
 
 const program = new Command();
 
+async function getVersion(): Promise<string> {
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const pkg = JSON.parse(await readFile(pkgPath, "utf-8"));
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 program
   .name("pencil-sync")
   .description("Bidirectional sync between .pen design files and frontend code")
-  .version("0.1.0")
+  .version(await getVersion())
   .option("-c, --config <path>", "Path to config file")
   .option("-v, --verbose", "Enable debug logging");
 
-// Watch command
 program
   .command("watch")
   .description("Start auto-sync file watcher")
@@ -43,11 +53,10 @@ program
 
     await watcher.start(opts.mapping);
 
-    // Keep process alive
+    // Never-resolving promise keeps the event loop alive so the file watcher continues running
     await new Promise(() => {});
   });
 
-// Sync command
 program
   .command("sync")
   .description("Run a one-time sync")
@@ -99,12 +108,21 @@ program
     engine.shutdown();
   });
 
-// Init command
 program
   .command("init")
   .description("Create a pencil-sync config file in the current directory")
   .action(async () => {
     const configPath = join(process.cwd(), "pencil-sync.config.json");
+
+    try {
+      await access(configPath);
+      log.error(`Config already exists: ${configPath}`);
+      log.info("Delete it first or edit it directly.");
+      process.exit(1);
+    } catch {
+      // File doesn't exist — good, proceed
+    }
+
     const template = {
       version: 1,
       mappings: [
@@ -131,7 +149,6 @@ program
     log.info("Edit the config to set your .pen file and code directory paths.");
   });
 
-// Status command
 program
   .command("status")
   .description("Show sync state for all mappings")

@@ -70,7 +70,7 @@ export async function detectFramework(
       if (deps["vue"]) return "vue";
       if (deps["react"]) return "react";
     } catch {
-      // ignore parse errors
+      // Malformed package.json — fall through to "unknown"
     }
   }
 
@@ -100,7 +100,7 @@ export async function detectStyling(projectDir: string): Promise<Styling> {
       if (deps["tailwindcss"]) return "tailwind";
       if (deps["styled-components"]) return "styled-components";
     } catch {
-      // ignore
+      // Malformed package.json — fall through to "unknown"
     }
   }
 
@@ -175,8 +175,11 @@ export async function loadConfig(
   log.debug(`Loading config from ${resolvedPath}`);
 
   const raw = await readFile(resolvedPath, "utf-8");
-  // Strip JSONC comments
-  const cleaned = raw.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  // Strip JSONC comments while preserving string contents
+  const cleaned = raw.replace(
+    /"(?:[^"\\]|\\.)*"|\/\/.*$|\/\*[\s\S]*?\*\//gm,
+    (match) => (match.startsWith("/") ? "" : match),
+  );
   const parsed = JSON.parse(cleaned) as Partial<PencilSyncConfig>;
 
   if (!parsed.mappings || parsed.mappings.length === 0) {
@@ -192,6 +195,13 @@ export async function loadConfig(
   const mappings = await Promise.all(
     parsed.mappings.map((m) => resolveMapping(m as MappingConfig, configDir)),
   );
+
+  // Validate mapping ID uniqueness
+  const ids = mappings.map((m) => m.id);
+  const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+  if (dupes.length > 0) {
+    throw new Error(`Duplicate mapping id(s): ${[...new Set(dupes)].join(", ")}`);
+  }
 
   return {
     version: parsed.version ?? 1,

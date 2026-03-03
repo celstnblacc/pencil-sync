@@ -143,6 +143,25 @@ describe("loadConfig", () => {
     expect(config.version).toBe(1);
   });
 
+  it("strips JSONC comments without corrupting glob patterns", async () => {
+    const configPath = join(dir, "pencil-sync.config.jsonc");
+    await writeFile(configPath, `{
+      // line comment
+      "version": 1,
+      /* block comment */
+      "mappings": [{
+        "id": "main",
+        "penFile": "design.pen",
+        "codeDir": "code",
+        "codeGlobs": ["**/*.tsx", "**/*.css"],
+        "direction": "both"
+      }]
+    }`);
+
+    const config = await loadConfig(configPath);
+    expect(config.mappings[0].codeGlobs).toEqual(["**/*.tsx", "**/*.css"]);
+  });
+
   it("merges with default settings", async () => {
     const configPath = join(dir, "pencil-sync.config.json");
     await writeFile(configPath, JSON.stringify({
@@ -201,6 +220,18 @@ describe("loadConfig", () => {
     // Dangerous keys should not exist as own properties on the result
     expect(Object.getOwnPropertyDescriptor(config.settings, "__proto__")).toBeUndefined();
     expect(Object.getOwnPropertyDescriptor(config.settings, "prototype")).toBeUndefined();
+  });
+
+  it("rejects duplicate mapping ids", async () => {
+    const configPath = join(dir, "pencil-sync.config.json");
+    await writeFile(configPath, JSON.stringify({
+      mappings: [
+        { id: "app", penFile: "a.pen", codeDir: "code", codeGlobs: ["**/*.tsx"], direction: "both" },
+        { id: "app", penFile: "b.pen", codeDir: "code", codeGlobs: ["**/*.tsx"], direction: "both" },
+      ],
+    }));
+
+    await expect(loadConfig(configPath)).rejects.toThrow("Duplicate mapping id(s): app");
   });
 
   it("merges settings with no overrides", async () => {

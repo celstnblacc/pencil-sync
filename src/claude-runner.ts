@@ -81,6 +81,7 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
 
     let stdout = "";
     let stderr = "";
+    const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB safety cap
 
     // Hard timeout: kill process if it hangs
     const timeoutTimer = setTimeout(() => {
@@ -89,7 +90,7 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
         finish(1);
         proc.kill("SIGTERM");
         setTimeout(() => {
-          try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+          try { proc.kill("SIGKILL"); } catch { /* noop */ }
         }, 5000);
       }
     }, CLAUDE_TIMEOUT_MS);
@@ -109,11 +110,11 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
     };
 
     proc.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      if (stdout.length < MAX_BUFFER) stdout += chunk.toString();
     });
 
     proc.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      if (stderr.length < MAX_BUFFER) stderr += chunk.toString();
     });
 
     proc.on("close", (code) => {

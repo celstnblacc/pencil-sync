@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, rename } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { log } from "./logger.js";
 import type { SyncState, MappingState, MappingConfig, SyncDirection, PenNodeSnapshot } from "./types.js";
@@ -23,8 +23,11 @@ export class StateStore {
     }
   }
 
+  // Atomic write: write to .tmp then rename to avoid corrupted state if process is killed mid-write
   async save(): Promise<void> {
-    await writeFile(this.stateFilePath, JSON.stringify(this.state, null, 2));
+    const tmp = this.stateFilePath + ".tmp";
+    await writeFile(tmp, JSON.stringify(this.state, null, 2));
+    await rename(tmp, this.stateFilePath);
     log.debug("State saved");
   }
 
@@ -125,13 +128,11 @@ export function diffHashes(
 ): string[] {
   const changed: string[] = [];
 
-  // New or modified files
   for (const [file, hash] of Object.entries(after)) {
     if (before[file] !== hash) {
       changed.push(file);
     }
   }
-  // Deleted files
   for (const file of Object.keys(before)) {
     if (!(file in after)) {
       changed.push(file);

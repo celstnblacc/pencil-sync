@@ -3,7 +3,7 @@
 **Date:** 2026-03-03
 **Reviewer:** Claude Opus 4.6
 **Version:** 0.1.0
-**Updated:** 2026-03-03 — All 4 high-priority issues resolved, test suite added (92 tests)
+**Updated:** 2026-03-03 — All 4 high-priority issues resolved, test suite added (154 tests)
 
 ---
 
@@ -14,7 +14,7 @@ A CLI tool for **bidirectional synchronization between `.pen` design files and f
 | | |
 |---|---|
 | **Stack** | TypeScript (ES2022, NodeNext), commander, chokidar, chalk, ora, vitest |
-| **Source** | ~850 LOC across 11 source files + 3 prompt templates + 9 test files (92 tests) |
+| **Source** | ~850 LOC across 11 source files + 3 prompt templates + 10 test files (154 tests) |
 | **Entry** | `src/index.ts` — CLI with `watch`, `sync`, `init`, `status` commands |
 | **Engine** | `src/sync-engine.ts` — orchestrates lock, conflict detection, direction routing |
 | **AI Bridge** | `src/claude-runner.ts` — spawns `claude` CLI as subprocess |
@@ -73,7 +73,7 @@ The three prompt templates (`prompts/*.md`) are well-structured with clear instr
 `pen-to-code.ts` and `code-to-pen.ts` snapshot file hashes before/after Claude runs and diff to detect actual changes — replacing the previous fragile regex parsing of Claude's natural language output.
 
 ### Test suite
-92 tests across 9 test files using Vitest, covering all core modules: lock-manager, state-store, conflict-detector, claude-runner, pen-to-code, code-to-pen, sync-engine, config, and prompt-builder.
+154 tests across 10 test files using Vitest, covering all core modules: lock-manager, state-store, conflict-detector, claude-runner, pen-to-code, code-to-pen, sync-engine, config, prompt-builder, and watcher.
 
 ### Other positives
 - TypeScript strict mode with zero type errors
@@ -81,7 +81,7 @@ The three prompt templates (`prompts/*.md`) are well-structured with clear instr
 - Docker + docker-compose support for containerized operation
 - Debounced file watching with `awaitWriteFinish` stability thresholds
 - Graceful shutdown handling (SIGINT/SIGTERM)
-- `--max-turns 1` safety net on Claude CLI invocations
+- `--max-turns 3` safety net on Claude CLI invocations
 
 ---
 
@@ -97,7 +97,7 @@ The three prompt templates (`prompts/*.md`) are well-structured with clear instr
 
 #### 2. ~~`maxBudgetUsd` is never enforced~~ — FIXED
 
-**Resolution:** Added `TokenUsage` type and `tokenUsage` field to `ClaudeRunResult`. `claude-runner.ts` now parses token counts from Claude CLI `--verbose` stderr output, with a model pricing lookup table (`MODEL_PRICING`). `SyncEngine` tracks cumulative spend per session, performs pre-flight budget estimates, and blocks execution when `maxBudgetUsd` would be exceeded. Also added `--max-turns 1` as a safety net to prevent runaway agent loops.
+**Resolution:** Added `TokenUsage` type and `tokenUsage` field to `ClaudeRunResult`. `claude-runner.ts` now parses token counts from Claude CLI `--verbose` stderr output, with a model pricing lookup table (`MODEL_PRICING`). `SyncEngine` tracks cumulative spend per session, performs pre-flight budget estimates, and blocks execution when `maxBudgetUsd` would be exceeded. Also added `--max-turns 3` as a safety net to prevent runaway agent loops.
 
 ---
 
@@ -111,16 +111,17 @@ The three prompt templates (`prompts/*.md`) are well-structured with clear instr
 
 #### 4. ~~No tests~~ — FIXED
 
-**Resolution:** Added Vitest with 92 tests across 9 test files:
-- `lock-manager.test.ts` (14) — acquire/release, grace period timing, direction suppression
+**Resolution:** Added Vitest with 154 tests across 10 test files:
+- `lock-manager.test.ts` (17) — acquire/release, grace period timing, direction suppression, stale locks
 - `state-store.test.ts` (16) — hash functions, `diffHashes`, `globToRegex`, state persistence
 - `conflict-detector.test.ts` (7) — all conflict scenarios
-- `claude-runner.test.ts` (13) — token parsing, cost estimation, model pricing
-- `pen-to-code.test.ts` (4) — filesystem diff with mocked Claude
+- `claude-runner.test.ts` (22) — token parsing, cost estimation, spawn mock, chunked I/O, timeout
+- `pen-to-code.test.ts` (13) — color fast path, theme blocks, Claude CLI for text/typography
 - `code-to-pen.test.ts` (5) — hash diff with mocked Claude
-- `sync-engine.test.ts` (10) — orchestration, budget enforcement, lock integration
-- `config.test.ts` (16) — framework/styling detection, config loading, JSONC
-- `prompt-builder.test.ts` (7) — template loading, placeholder replacement
+- `sync-engine.test.ts` (19) — orchestration, budget, conflicts, all resolution strategies
+- `config.test.ts` (20) — framework/styling detection, config loading, JSONC, duplicate IDs
+- `prompt-builder.test.ts` (19) — template loading, snapshots, diffing
+- `watcher.test.ts` (8) — debounce, echo suppression, lifecycle
 
 ---
 
@@ -145,16 +146,9 @@ Vite is used with Vue, Svelte, Solid, and others. This misclassifies non-React V
 
 ---
 
-#### 7. No config validation
-**File:** `src/config.ts:137-187`
+#### 7. ~~No config validation~~ — PARTIALLY FIXED
 
-`loadConfig` doesn't validate:
-- Duplicate mapping IDs
-- Valid `direction` values
-- Existence of `penFile` or `codeDir`
-- Required fields on each mapping
-
-Invalid config silently produces undefined behavior rather than clear error messages.
+**Resolution:** Added duplicate mapping ID detection (throws on load). JSONC comment stripping fixed to not corrupt glob patterns inside strings. Remaining: `direction` value validation, existence checks for `penFile`/`codeDir`.
 
 ---
 
@@ -224,6 +218,6 @@ All 4 high-priority issues have been resolved:
 - **Filesystem diffing** replaced brittle regex output parsing (+ bonus `globToRegex` bug fix)
 - **Budget enforcement** with token tracking, model pricing, pre-flight estimates, and session-level spend limits
 - **Sync loop prevention** via dynamic grace periods and direction-aware trigger suppression
-- **92 tests** across 9 test files provide a safety net for all core modules
+- **154 tests** across 10 test files provide a safety net for all core modules
 
 Remaining medium-priority items (file deletion handling, config validation, Vite framework detection) are non-critical and can be addressed incrementally.

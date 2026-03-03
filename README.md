@@ -1,8 +1,8 @@
 # pencil-sync
 
 ![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-green)
-![Tests: 92 passing](https://img.shields.io/badge/tests-92%20passing-brightgreen)
-![License: ISC](https://img.shields.io/badge/license-ISC-blue)
+![Tests: 154 passing](https://img.shields.io/badge/tests-154%20passing-brightgreen)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 Bidirectional sync between [Pencil.dev](https://pencil.dev) designs and frontend code, powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
@@ -80,8 +80,8 @@ All paths in the config (`penFile`, `codeDir`, `stateFile`) are resolved relativ
   "version": 1,
   "mappings": [
     {
-      "id": "viddocs-ui",
-      "penFile": "./viddocs_ui_monokai.pen",
+      "id": "my-app",
+      "penFile": "./design.pen",
       "codeDir": "./frontend",
       "codeGlobs": ["components/**/*.tsx", "app/**/*.tsx", "app/**/*.css"],
       "framework": "nextjs",
@@ -102,7 +102,7 @@ All paths in the config (`penFile`, `codeDir`, `stateFile`) are resolved relativ
 pencil-sync sync -c ./pencil-sync.config.json -d pen-to-code
 
 # Watch a specific mapping (useful with multiple mappings)
-pencil-sync watch -c ./pencil-sync.config.json -m viddocs-ui
+pencil-sync watch -c ./pencil-sync.config.json -m my-app
 ```
 
 ## Commands
@@ -283,7 +283,7 @@ src/
   config.ts              Config loading, framework/styling auto-detection
   watcher.ts             Chokidar file watching with debounced triggers
   logger.ts              Colored timestamped logging
-  __tests__/             92 tests across 9 test files (vitest)
+  __tests__/             154 tests across 10 test files (vitest)
 prompts/
   pen-to-code.md         Template for design-to-code prompts
   code-to-pen.md         Template for code-to-design prompts
@@ -296,4 +296,4 @@ pencil.dev, claude code, design to code, code to design, .pen files, bidirection
 
 ## License
 
-ISC
+[MIT](LICENSE)
