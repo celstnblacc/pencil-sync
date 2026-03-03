@@ -45,7 +45,7 @@ describe("snapshotPenFile", () => {
               type: "frame",
               fill: "#1e1f1c",
               children: [
-                { id: "logo", name: "logoText", type: "text", content: "viddocs", fontSize: 24 },
+                { id: "logo", name: "logoText", type: "text", content: "Acme", fontSize: 24 },
               ],
             },
           ],
@@ -58,7 +58,7 @@ describe("snapshotPenFile", () => {
     expect(snapshot["page"]).toBeDefined();
     expect(snapshot["header"]).toBeDefined();
     expect(snapshot["logo"]).toBeDefined();
-    expect(snapshot["logo"].content).toBe("viddocs");
+    expect(snapshot["logo"].content).toBe("Acme");
     expect(snapshot["logo"].fontSize).toBe(24);
   });
 
