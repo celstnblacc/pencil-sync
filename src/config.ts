@@ -10,6 +10,20 @@ import type {
 import { DEFAULT_SETTINGS } from "./types.js";
 import { log } from "./logger.js";
 
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function safeMerge<T>(base: T, overrides?: Partial<T>): T {
+  const result = { ...base };
+  if (overrides) {
+    for (const key of Object.keys(overrides) as (keyof T)[]) {
+      if (!DANGEROUS_KEYS.has(key as string)) {
+        result[key] = overrides[key] as T[keyof T];
+      }
+    }
+  }
+  return result;
+}
+
 const CONFIG_FILENAMES = [
   "pencil-sync.config.json",
   ".pencil-sync.json",
@@ -170,7 +184,7 @@ export async function loadConfig(
   }
 
   const configDir = dirname(resolvedPath);
-  const settings: Settings = { ...DEFAULT_SETTINGS, ...parsed.settings };
+  const settings: Settings = safeMerge(DEFAULT_SETTINGS, parsed.settings);
 
   // Resolve state file path relative to config
   settings.stateFile = resolve(configDir, settings.stateFile);

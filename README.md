@@ -1,8 +1,12 @@
 # pencil-sync
 
-Bidirectional sync between `.pen` design files and frontend code via the Claude CLI.
+![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-green)
+![Tests: 92 passing](https://img.shields.io/badge/tests-92%20passing-brightgreen)
+![License: ISC](https://img.shields.io/badge/license-ISC-blue)
 
-pencil-sync watches for changes in your design files or code, detects conflicts, and spawns Claude with tailored prompts to propagate changes in either direction.
+Bidirectional sync between [Pencil.dev](https://pencil.dev) designs and frontend code, powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+
+Edit a component in Pencil — code updates automatically. Change code — the design follows. pencil-sync watches `.pen` files and your source tree, detects conflicts, and uses the Claude CLI to propagate changes in either direction — with budget controls, conflict resolution, and sync loop prevention.
 
 ## Prerequisites
 
@@ -285,6 +289,10 @@ prompts/
   code-to-pen.md         Template for code-to-design prompts
   conflict-resolve.md    Template for conflict resolution prompts
 ```
+
+## Keywords
+
+pencil.dev, claude code, design to code, code to design, .pen files, bidirectional sync, AI coding, vibe coding, design sync, MCP, Anthropic, frontend tooling
 
 ## License
 

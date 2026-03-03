@@ -2,3 +2,18 @@ node_modules/
 dist/
 .pencil-sync-state.json
 *.tsbuildinfo
+
+# Secrets & credentials
+.env
+.env.*
+*.pem
+*.key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
