@@ -16,7 +16,7 @@ function safeMerge<T>(base: T, overrides?: Partial<T>): T {
   const result = { ...base };
   if (overrides) {
     for (const key of Object.keys(overrides) as (keyof T)[]) {
-      if (!DANGEROUS_KEYS.has(key as string)) {
+      if (!DANGEROUS_KEYS.has(key as string) && Object.prototype.hasOwnProperty.call(base, key)) {
         result[key] = overrides[key] as T[keyof T];
       }
     }

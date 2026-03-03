@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PencilSyncConfig, MappingConfig } from "../types.js";
 
-// Mock claude-runner
 vi.mock("../claude-runner.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../claude-runner.js")>();
   return {
@@ -135,12 +134,10 @@ describe("SyncEngine", () => {
     });
 
     it("blocks sync when budget exhausted", async () => {
-      // Set a very low budget
       config.settings.maxBudgetUsd = 0.0001;
       const lowBudgetEngine = new SyncEngine(config);
       await lowBudgetEngine.initialize();
 
-      // First sync uses some budget
       mockedRunClaude.mockResolvedValueOnce({
         success: true,
         stdout: "Done",
@@ -176,24 +173,26 @@ describe("SyncEngine", () => {
     });
   });
 
+  // Rebuild engine with a non-interactive conflict strategy to avoid stdin blocking
+  async function withStrategy(strategy: "pen-wins" | "code-wins" | "auto-merge") {
+    config.settings.conflictStrategy = strategy;
+    engine = new SyncEngine(config);
+    await engine.initialize();
+  }
+
   describe("conflict resolution", () => {
     // For conflict tests we need both pen AND code to have changed since last state.
     // We initialize state, then change both files before triggering sync.
     async function setupConflict() {
-      // First sync to establish baseline state
       await engine.syncMapping(mapping, "pen-changed");
       engine.getLockManager().forceRelease(mapping.id);
 
-      // Now change both .pen and code files so conflict detector sees a conflict
       await writeFile(join(dir, "design.pen"), JSON.stringify({ children: [{ id: "changed" }] }));
       await writeFile(join(dir, "code", "app.tsx"), "modified code");
     }
 
     it("pen-wins strategy syncs pen-to-code on conflict", async () => {
-      config.settings.conflictStrategy = "pen-wins";
-      engine = new SyncEngine(config);
-      await engine.initialize();
-
+      await withStrategy("pen-wins");
       await setupConflict();
 
       const result = await engine.syncMapping(mapping, "pen-changed");
@@ -202,10 +201,7 @@ describe("SyncEngine", () => {
     });
 
     it("code-wins strategy syncs code-to-pen on conflict", async () => {
-      config.settings.conflictStrategy = "code-wins";
-      engine = new SyncEngine(config);
-      await engine.initialize();
-
+      await withStrategy("code-wins");
       await setupConflict();
 
       const result = await engine.syncMapping(mapping, "code-changed");
@@ -214,30 +210,23 @@ describe("SyncEngine", () => {
     });
 
     it("auto-merge strategy calls Claude with conflict prompt", async () => {
-      config.settings.conflictStrategy = "auto-merge";
-      engine = new SyncEngine(config);
-      await engine.initialize();
-
+      await withStrategy("auto-merge");
       await setupConflict();
 
       const result = await engine.syncMapping(mapping, "pen-changed");
       expect(result.success).toBe(true);
       expect(result.direction).toBe("both");
       expect(result.filesChanged.length).toBeGreaterThan(0);
-      // auto-merge uses runClaude directly (via buildConflictPrompt)
       expect(mockedRunClaude).toHaveBeenCalled();
     });
 
     it("auto-merge returns error when Claude fails", async () => {
-      config.settings.conflictStrategy = "auto-merge";
-      engine = new SyncEngine(config);
-      await engine.initialize();
+      await withStrategy("auto-merge");
 
       mockedRunClaude.mockResolvedValueOnce({
         success: true, stdout: "Done", stderr: "", exitCode: 0,
         tokenUsage: { input: 1000, output: 200 },
-      }); // for initial pen-to-code sync
-      // For the auto-merge call, Claude fails
+      });
       mockedRunClaude.mockResolvedValueOnce({
         success: false, stdout: "", stderr: "API overloaded", exitCode: 1,
         tokenUsage: { input: 500, output: 0 },
@@ -251,19 +240,14 @@ describe("SyncEngine", () => {
     });
 
     it("conflict is only triggered for direction=both mappings", async () => {
-      // pen-to-code mapping ignores conflicts (just does pen-to-code)
       const penOnlyMapping = { ...mapping, direction: "pen-to-code" as const };
-      config.settings.conflictStrategy = "pen-wins";
       config.mappings = [penOnlyMapping];
-      engine = new SyncEngine(config);
-      await engine.initialize();
+      await withStrategy("pen-wins");
 
-      // Change both files
       await writeFile(join(dir, "design.pen"), JSON.stringify({ children: [{ id: "x" }] }));
       await writeFile(join(dir, "code", "app.tsx"), "new code");
 
       const result = await engine.syncMapping(penOnlyMapping, "pen-changed");
-      // Should succeed without conflict handling because direction is not "both"
       expect(result.success).toBe(true);
       expect(result.direction).toBe("pen-to-code");
     });
@@ -271,16 +255,11 @@ describe("SyncEngine", () => {
 
   describe("manual trigger with auto direction", () => {
     it("syncs pen-to-code when only pen changed", async () => {
-      // Use non-interactive strategy to avoid stdin blocking if conflict is detected
-      config.settings.conflictStrategy = "pen-wins";
-      engine = new SyncEngine(config);
-      await engine.initialize();
+      await withStrategy("pen-wins");
 
-      // Establish baseline
       await engine.syncMapping(mapping, "pen-changed");
       engine.getLockManager().forceRelease(mapping.id);
 
-      // Only change .pen file
       await writeFile(join(dir, "design.pen"), JSON.stringify({ children: [{ id: "new" }] }));
 
       const result = await engine.syncMapping(mapping, "manual");
@@ -289,15 +268,11 @@ describe("SyncEngine", () => {
     });
 
     it("syncs code-to-pen when only code changed", async () => {
-      config.settings.conflictStrategy = "code-wins";
-      engine = new SyncEngine(config);
-      await engine.initialize();
+      await withStrategy("code-wins");
 
-      // Establish baseline
       await engine.syncMapping(mapping, "pen-changed");
       engine.getLockManager().forceRelease(mapping.id);
 
-      // Only change code file
       await writeFile(join(dir, "code", "app.tsx"), "changed code");
 
       const result = await engine.syncMapping(mapping, "manual");
@@ -306,11 +281,8 @@ describe("SyncEngine", () => {
     });
 
     it("defaults to pen-to-code when neither changed", async () => {
-      config.settings.conflictStrategy = "pen-wins";
-      engine = new SyncEngine(config);
-      await engine.initialize();
+      await withStrategy("pen-wins");
 
-      // Establish baseline — nothing changes after
       await engine.syncMapping(mapping, "pen-changed");
       engine.getLockManager().forceRelease(mapping.id);
 
@@ -322,26 +294,19 @@ describe("SyncEngine", () => {
 
   describe("pre-flight budget estimate", () => {
     it("blocks sync when estimated input cost exceeds remaining budget", async () => {
-      // Set a tiny budget and exhaust most of it
       config.settings.maxBudgetUsd = 0.001;
-      config.settings.conflictStrategy = "pen-wins";
-      const tinyEngine = new SyncEngine(config);
-      await tinyEngine.initialize();
+      await withStrategy("pen-wins");
 
-      // First sync to use some budget
       mockedRunClaude.mockResolvedValueOnce({
         success: true, stdout: "Done", stderr: "", exitCode: 0,
         tokenUsage: { input: 50_000, output: 10_000 },
       });
-      await tinyEngine.syncMapping(mapping, "pen-changed");
-      tinyEngine.getLockManager().forceRelease(mapping.id);
+      await engine.syncMapping(mapping, "pen-changed");
+      engine.getLockManager().forceRelease(mapping.id);
 
-      // Budget should now be exhausted
-      const result = await tinyEngine.syncMapping(mapping, "pen-changed");
+      const result = await engine.syncMapping(mapping, "pen-changed");
       expect(result.success).toBe(false);
       expect(result.error).toContain("Budget");
-
-      tinyEngine.shutdown();
     });
   });
 });

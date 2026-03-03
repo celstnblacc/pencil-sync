@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { PencilSyncConfig, MappingConfig } from "../types.js";
 
-// Mock chokidar
 const mockWatcher = {
   on: vi.fn().mockReturnThis(),
   close: vi.fn().mockResolvedValue(undefined),
@@ -10,7 +9,6 @@ vi.mock("chokidar", () => ({
   watch: vi.fn().mockReturnValue(mockWatcher),
 }));
 
-// Mock sync-engine
 const mockSyncMapping = vi.fn().mockResolvedValue({
   success: true,
   direction: "pen-to-code",
@@ -80,6 +78,7 @@ describe("Watcher", () => {
   });
 
   afterEach(async () => {
+    await watcher.stop();
     vi.useRealTimers();
   });
 
@@ -125,7 +124,6 @@ describe("Watcher", () => {
     it("debounces multiple rapid pen changes into one sync", async () => {
       await watcher.start();
 
-      // Find the pen watcher "change" callback
       const changeCallbacks: Array<() => void> = [];
       for (const call of mockWatcher.on.mock.calls) {
         if (call[0] === "change") {
@@ -157,7 +155,6 @@ describe("Watcher", () => {
 
       await watcher.start();
 
-      // Find the pen change handler
       const changeCallbacks: Array<() => void> = [];
       for (const call of mockWatcher.on.mock.calls) {
         if (call[0] === "change") changeCallbacks.push(call[1] as () => void);

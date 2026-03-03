@@ -94,25 +94,26 @@ describe("MODEL_PRICING", () => {
 });
 
 describe("runClaude", () => {
-  let listeners: Record<string, (...args: unknown[]) => void>;
+  type Listener = (...args: unknown[]) => void;
+  let listeners: Map<string, Listener>;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    listeners = {};
+    listeners = new Map();
 
     const mockProc = {
       stdout: {
-        on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-          listeners[`stdout:${event}`] = cb;
+        on: vi.fn((event: string, cb: Listener) => {
+          listeners.set(`stdout:${event}`, cb);
         }),
       },
       stderr: {
-        on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-          listeners[`stderr:${event}`] = cb;
+        on: vi.fn((event: string, cb: Listener) => {
+          listeners.set(`stderr:${event}`, cb);
         }),
       },
-      on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-        listeners[event] = cb;
+      on: vi.fn((event: string, cb: Listener) => {
+        listeners.set(event, cb);
       }),
       kill: vi.fn(),
     };
@@ -128,9 +129,9 @@ describe("runClaude", () => {
   it("resolves with success on exit code 0", async () => {
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
 
-    listeners["stdout:data"](Buffer.from("output text"));
-    listeners["stderr:data"](Buffer.from('{"input_tokens": 100, "output_tokens": 50}'));
-    listeners["close"](0);
+    listeners.get("stdout:data")!(Buffer.from("output text"));
+    listeners.get("stderr:data")!(Buffer.from('{"input_tokens": 100, "output_tokens": 50}'));
+    listeners.get("close")!(0);
 
     const result = await promise;
     expect(result.success).toBe(true);
@@ -142,8 +143,8 @@ describe("runClaude", () => {
   it("resolves with failure on non-zero exit code", async () => {
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
 
-    listeners["stderr:data"](Buffer.from("API error"));
-    listeners["close"](1);
+    listeners.get("stderr:data")!(Buffer.from("API error"));
+    listeners.get("close")!(1);
 
     const result = await promise;
     expect(result.success).toBe(false);
@@ -154,7 +155,7 @@ describe("runClaude", () => {
   it("handles spawn error (binary not found)", async () => {
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
 
-    listeners["error"](new Error("spawn claude ENOENT"));
+    listeners.get("error")!(new Error("spawn claude ENOENT"));
 
     const result = await promise;
     expect(result.success).toBe(false);
@@ -165,10 +166,8 @@ describe("runClaude", () => {
   it("does not double-resolve when close fires after error", async () => {
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
 
-    // Error fires first
-    listeners["error"](new Error("spawn failed"));
-    // Then close fires — should be ignored via resolved guard
-    listeners["close"](1);
+    listeners.get("error")!(new Error("spawn failed"));
+    listeners.get("close")!(1);
 
     const result = await promise;
     expect(result.success).toBe(false);
@@ -180,7 +179,7 @@ describe("runClaude", () => {
     process.env.CLAUDE_CODE_SESSION = "should-be-stripped";
 
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
-    listeners["close"](0);
+    listeners.get("close")!(0);
     await promise;
 
     const spawnCall = mockSpawn.mock.calls[0];
@@ -194,7 +193,7 @@ describe("runClaude", () => {
 
   it("passes cwd option to spawn", async () => {
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6", cwd: "/custom/dir" });
-    listeners["close"](0);
+    listeners.get("close")!(0);
     await promise;
 
     const spawnCall = mockSpawn.mock.calls[0];
@@ -203,7 +202,7 @@ describe("runClaude", () => {
 
   it("includes required CLI flags", async () => {
     const promise = runClaude({ prompt: "test prompt", model: "claude-haiku-4-5-20251001" });
-    listeners["close"](0);
+    listeners.get("close")!(0);
     await promise;
 
     const args: string[] = mockSpawn.mock.calls[0][1] as string[];
@@ -217,11 +216,11 @@ describe("runClaude", () => {
   it("accumulates chunked stdout and stderr", async () => {
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
 
-    listeners["stdout:data"](Buffer.from("chunk1"));
-    listeners["stdout:data"](Buffer.from("chunk2"));
-    listeners["stderr:data"](Buffer.from("err1"));
-    listeners["stderr:data"](Buffer.from("err2"));
-    listeners["close"](0);
+    listeners.get("stdout:data")!(Buffer.from("chunk1"));
+    listeners.get("stdout:data")!(Buffer.from("chunk2"));
+    listeners.get("stderr:data")!(Buffer.from("err1"));
+    listeners.get("stderr:data")!(Buffer.from("err2"));
+    listeners.get("close")!(0);
 
     const result = await promise;
     expect(result.stdout).toBe("chunk1chunk2");
@@ -231,7 +230,7 @@ describe("runClaude", () => {
   it("defaults exit code to 1 when close provides null", async () => {
     const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
 
-    listeners["close"](null);
+    listeners.get("close")!(null);
 
     const result = await promise;
     expect(result.success).toBe(false);

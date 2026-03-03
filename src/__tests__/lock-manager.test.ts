@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { LockManager } from "../lock-manager.js";
+import { LockManager, STALE_LOCK_MS } from "../lock-manager.js";
 
 describe("LockManager", () => {
   let lm: LockManager;
@@ -90,28 +90,25 @@ describe("LockManager", () => {
   });
 
   describe("stale lock detection", () => {
-    it("auto-releases lock held longer than 6 minutes", () => {
+    it("auto-releases lock held longer than STALE_LOCK_MS", () => {
       lm.acquire("m1");
       expect(lm.isLocked("m1")).toBe(true);
 
-      // Advance past STALE_LOCK_MS (360_000ms = 6 min)
-      vi.advanceTimersByTime(360_001);
+      vi.advanceTimersByTime(STALE_LOCK_MS + 1);
 
-      // isLocked should detect staleness and force-release
       expect(lm.isLocked("m1")).toBe(false);
-      // Should now be acquirable again
       expect(lm.acquire("m1")).toBe(true);
     });
 
-    it("does NOT auto-release lock within 6 minutes", () => {
+    it("does NOT auto-release lock within STALE_LOCK_MS", () => {
       lm.acquire("m1");
-      vi.advanceTimersByTime(359_999);
+      vi.advanceTimersByTime(STALE_LOCK_MS - 1);
       expect(lm.isLocked("m1")).toBe(true);
     });
 
     it("stale lock allows new acquire", () => {
       lm.acquire("m1");
-      vi.advanceTimersByTime(360_001);
+      vi.advanceTimersByTime(STALE_LOCK_MS + 1);
 
       // acquire calls isLocked, which detects staleness
       expect(lm.acquire("m1")).toBe(true);

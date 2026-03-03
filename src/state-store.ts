@@ -88,7 +88,6 @@ async function collectFiles(
 ): Promise<string[]> {
   const results: string[] = [];
 
-  // Convert globs to simple regex patterns for matching
   const patterns = globs.map((g) => globToRegex(g));
 
   async function walk(currentDir: string): Promise<void> {
@@ -142,6 +141,7 @@ export function diffHashes(
   return changed.sort();
 }
 
+// Convert a file glob pattern (e.g. "**\/*.tsx") to an anchored RegExp.
 export function globToRegex(glob: string): RegExp {
   let regex = glob
     .replace(/\?/g, "[^/]")

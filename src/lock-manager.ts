@@ -2,7 +2,9 @@ import { log } from "./logger.js";
 import type { SyncDirection } from "./types.js";
 
 const GRACE_BUFFER_MS = 500;
-const STALE_LOCK_MS = 360_000; // 6 minutes — force release if held longer than this
+
+/** Maximum time (ms) a lock can be held before it's considered stale (6 minutes). */
+export const STALE_LOCK_MS = 360_000;
 
 export class LockManager {
   private locks = new Map<string, boolean>();
@@ -19,7 +21,6 @@ export class LockManager {
   isLocked(mappingId: string): boolean {
     if (this.locks.get(mappingId) !== true) return false;
 
-    // Check for stale lock — force release if held too long
     const acquiredAt = this.lockTimestamps.get(mappingId);
     if (acquiredAt && Date.now() - acquiredAt > STALE_LOCK_MS) {
       log.warn(`Stale lock detected for ${mappingId} (held for ${Math.round((Date.now() - acquiredAt) / 1000)}s), force releasing`);

@@ -86,8 +86,8 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
     const timeoutTimer = setTimeout(() => {
       if (!resolved) {
         log.error(`Claude CLI timed out after ${CLAUDE_TIMEOUT_MS / 1000}s, killing process`);
+        finish(1);
         proc.kill("SIGTERM");
-        // Force kill after 5s if SIGTERM doesn't work
         setTimeout(() => {
           try { proc.kill("SIGKILL"); } catch { /* already dead */ }
         }, 5000);
