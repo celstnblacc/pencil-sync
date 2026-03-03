@@ -51,6 +51,7 @@ describe("Watcher", () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     mockWatcher.on.mockReturnThis();
+    mockShouldSuppress.mockReturnValue(false);
 
     mapping = {
       id: "test",
@@ -85,7 +86,6 @@ describe("Watcher", () => {
   describe("start", () => {
     it("creates watchers for pen file and code dir when direction is both", async () => {
       await watcher.start();
-      // Should call chokidar.watch twice: once for pen file, once for code globs
       expect(chokidarWatch).toHaveBeenCalledTimes(2);
     });
 
@@ -115,7 +115,6 @@ describe("Watcher", () => {
       ];
       watcher = new Watcher(config, mockEngine as never);
       await watcher.start("test");
-      // Only the "test" mapping should be watched (2 watchers: pen + code)
       expect(chokidarWatch).toHaveBeenCalledTimes(2);
     });
   });
@@ -166,6 +165,21 @@ describe("Watcher", () => {
 
       // syncMapping should NOT be called because trigger was suppressed
       expect(mockSyncMapping).not.toHaveBeenCalled();
+    });
+
+    it("triggers code sync on unlink events", async () => {
+      await watcher.start();
+
+      const unlinkCallbacks: Array<(path: string) => void> = [];
+      for (const call of mockWatcher.on.mock.calls) {
+        if (call[0] === "unlink") unlinkCallbacks.push(call[1] as (path: string) => void);
+      }
+
+      expect(unlinkCallbacks.length).toBeGreaterThan(0);
+      unlinkCallbacks[unlinkCallbacks.length - 1]("/project/src/app.tsx");
+      await vi.advanceTimersByTimeAsync(config.settings.debounceMs + 50);
+
+      expect(mockSyncMapping).toHaveBeenCalledWith(mapping, "code-changed");
     });
   });
 

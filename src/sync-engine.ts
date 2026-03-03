@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { readFile } from "node:fs/promises";
 import { log } from "./logger.js";
 import { LockManager } from "./lock-manager.js";
 import { StateStore } from "./state-store.js";
@@ -6,7 +7,8 @@ import { detectConflict, isConflict } from "./conflict-detector.js";
 import { syncPenToCode } from "./pen-to-code.js";
 import { syncCodeToPen } from "./code-to-pen.js";
 import { runClaude, estimateCost, estimateInputTokens, MODEL_PRICING } from "./claude-runner.js";
-import { buildConflictPrompt } from "./prompt-builder.js";
+import { buildConflictPrompt, buildCodeToPenPrompt, buildPenToCodePrompt } from "./prompt-builder.js";
+import { snapshotPenFile, diffPenSnapshots } from "./pen-snapshot.js";
 import type {
   PencilSyncConfig,
   MappingConfig,
@@ -43,7 +45,7 @@ export class SyncEngine {
     return this.config.settings.maxBudgetUsd - this.cumulativeSpendUsd;
   }
 
-  private checkBudget(mapping: MappingConfig, prompt?: string): string | undefined {
+  private checkBudget(prompt?: string): string | undefined {
     const remaining = this.getRemainingBudgetUsd();
     if (remaining <= 0) {
       return `Budget exhausted ($${this.cumulativeSpendUsd.toFixed(4)} spent of $${this.config.settings.maxBudgetUsd} limit)`;
@@ -74,19 +76,6 @@ export class SyncEngine {
     triggerDirection: "pen-changed" | "code-changed" | "manual",
     manualDirection?: "pen-to-code" | "code-to-pen",
   ): Promise<SyncResult> {
-    const budgetError = this.checkBudget(mapping);
-    if (budgetError) {
-      log.warn(`Budget limit reached for ${mapping.id}: ${budgetError}`);
-      return {
-        success: false,
-        direction: mapping.direction,
-        mappingId: mapping.id,
-        filesChanged: [],
-        error: budgetError,
-      };
-    }
-
-    // Lock check
     if (!this.lockManager.acquire(mapping.id)) {
       return {
         success: false,
@@ -97,6 +86,8 @@ export class SyncEngine {
       };
     }
 
+    let releaseWithGrace = false;
+
     try {
       const previousState = this.stateStore.getMappingState(mapping.id);
       const conflict = await detectConflict(mapping, previousState);
@@ -104,10 +95,11 @@ export class SyncEngine {
       if (isConflict(conflict) && mapping.direction === "both") {
         const result = await this.handleConflict(mapping, conflict, previousState);
         this.trackSpend(result.tokenUsage);
-        if (result.success) {
+        if (result.success && !result.skipped) {
           await this.stateStore.updateMappingState(mapping, result.direction, result.penSnapshot);
           this.lockManager.setLastSyncDirection(mapping.id, result.direction);
         }
+        releaseWithGrace = result.success && !result.skipped;
         return result;
       }
 
@@ -128,7 +120,6 @@ export class SyncEngine {
         }
         result = await this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState);
       } else {
-        // Manual with auto direction
         if (conflict.penChanged && !conflict.codeChanged) {
           result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
         } else if (conflict.codeChanged && !conflict.penChanged) {
@@ -141,14 +132,19 @@ export class SyncEngine {
 
       this.trackSpend(result.tokenUsage);
 
-      if (result.success) {
+      if (result.success && !result.skipped) {
         await this.stateStore.updateMappingState(mapping, result.direction, result.penSnapshot);
         this.lockManager.setLastSyncDirection(mapping.id, result.direction);
       }
+      releaseWithGrace = result.success && !result.skipped;
 
       return result;
     } finally {
-      this.lockManager.release(mapping.id);
+      if (releaseWithGrace) {
+        this.lockManager.release(mapping.id);
+      } else {
+        this.lockManager.forceRelease(mapping.id);
+      }
     }
   }
 
@@ -158,10 +154,69 @@ export class SyncEngine {
     conflict: ConflictInfo,
     previousState: MappingState | undefined,
   ): Promise<SyncResult> {
+    const preflightError = direction === "code-to-pen"
+      ? await this.preflightBudgetCheck(mapping, conflict)
+      : await this.preflightPenToCodeBudgetCheck(mapping, previousState);
+    if (preflightError) {
+      log.warn(`Budget limit reached for ${mapping.id}: ${preflightError}`);
+      return {
+        success: false,
+        direction,
+        mappingId: mapping.id,
+        filesChanged: [],
+        error: preflightError,
+      };
+    }
+
     if (direction === "pen-to-code") {
       return syncPenToCode(mapping, this.config.settings, previousState);
     } else {
       return syncCodeToPen(mapping, this.config.settings, conflict.changedCodeFiles);
+    }
+  }
+
+  private async preflightBudgetCheck(
+    mapping: MappingConfig,
+    conflict: ConflictInfo,
+  ): Promise<string | undefined> {
+    try {
+      if (conflict.changedCodeFiles.length > 0) {
+        const prompt = await buildCodeToPenPrompt(mapping, conflict.changedCodeFiles);
+        return this.checkBudget(prompt);
+      }
+    } catch (err) {
+      // If we can't estimate prompt cost, keep sync behavior unchanged.
+      log.debug(`Failed preflight prompt estimate for ${mapping.id}: ${err}`);
+    }
+
+    return undefined;
+  }
+
+  private async preflightPenToCodeBudgetCheck(
+    mapping: MappingConfig,
+    previousState: MappingState | undefined,
+  ): Promise<string | undefined> {
+    try {
+      const penRaw = await readFile(mapping.penFile, "utf-8");
+      const newSnapshot = snapshotPenFile(mapping.penFile, penRaw);
+      if (newSnapshot === null) {
+        // Let syncPenToCode surface parse failures consistently.
+        return undefined;
+      }
+
+      const oldSnapshot = previousState?.penSnapshot ?? {};
+      const diffs = diffPenSnapshots(oldSnapshot, newSnapshot);
+      const hasNonFillDiffs = diffs.some((d) => d.prop !== "fill");
+      if (!hasNonFillDiffs) {
+        // Fill-only (or no-op) can run without Claude, even with exhausted budget.
+        return undefined;
+      }
+
+      const prompt = await buildPenToCodePrompt(mapping, undefined, diffs.filter((d) => d.prop !== "fill"));
+      return this.checkBudget(prompt);
+    } catch (err) {
+      log.debug(`Failed preflight pen-to-code estimate for ${mapping.id}: ${err}`);
+      return undefined;
     }
   }
 
@@ -197,6 +252,17 @@ export class SyncEngine {
     log.info(`Auto-merging conflict for ${mapping.id} via Claude`);
 
     const prompt = await buildConflictPrompt(mapping, conflict.changedCodeFiles);
+    const budgetError = this.checkBudget(prompt);
+    if (budgetError) {
+      return {
+        success: false,
+        direction: "both",
+        mappingId: mapping.id,
+        filesChanged: [],
+        error: budgetError,
+      };
+    }
+
     const result = await runClaude({
       prompt,
       model: this.config.settings.model,
@@ -251,6 +317,7 @@ export class SyncEngine {
         log.info("Skipping sync");
         return {
           success: true,
+          skipped: true,
           direction: "both",
           mappingId: mapping.id,
           filesChanged: [],
@@ -272,11 +339,10 @@ export class SyncEngine {
 }
 
 /**
- * C4: Non-interactive stdin guard + timeout.
+ * Non-interactive stdin guard + timeout.
  * Returns empty string if stdin is not a TTY (non-interactive mode) or on timeout.
  */
 function askUser(question: string): Promise<string> {
-  // Guard: non-interactive environments (CI, piped stdin, etc.)
   if (!process.stdin.isTTY) {
     log.warn("Non-interactive mode detected (stdin is not a TTY), skipping user prompt");
     return Promise.resolve("");

@@ -25,7 +25,7 @@ describe("syncCodeToPen", () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "pencil-test-"));
     await mkdir(join(dir, "code"));
-    await writeFile(join(dir, "design.pen"), "pen content");
+    await writeFile(join(dir, "design.pen"), JSON.stringify({ children: [] }));
 
     mapping = {
       id: "test",
@@ -61,7 +61,9 @@ describe("syncCodeToPen", () => {
   it("detects .pen file changed via hash diff", async () => {
     mockedRunClaude.mockImplementation(async () => {
       // Simulate Claude modifying the .pen file
-      await writeFile(join(dir, "design.pen"), "modified pen content");
+      await writeFile(join(dir, "design.pen"), JSON.stringify({
+        children: [{ id: "n1", name: "title", type: "text", content: "hello" }],
+      }));
       return { success: true, stdout: "Done", stderr: "", exitCode: 0 };
     });
 
@@ -69,6 +71,19 @@ describe("syncCodeToPen", () => {
 
     expect(result.success).toBe(true);
     expect(result.direction).toBe("code-to-pen");
+    expect(result.filesChanged).toEqual([mapping.penFile]);
+  });
+
+  it("returns error when .pen file is invalid after Claude run", async () => {
+    mockedRunClaude.mockImplementation(async () => {
+      await writeFile(join(dir, "design.pen"), "modified pen content");
+      return { success: true, stdout: "Done", stderr: "", exitCode: 0 };
+    });
+
+    const result = await syncCodeToPen(mapping, settings, ["app.tsx"]);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("invalid JSON");
     expect(result.filesChanged).toEqual([mapping.penFile]);
   });
 

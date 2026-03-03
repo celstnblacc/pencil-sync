@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { log } from "./logger.js";
 import { runClaude } from "./claude-runner.js";
 import { buildCodeToPenPrompt } from "./prompt-builder.js";
@@ -23,7 +24,6 @@ export async function syncCodeToPen(
     };
   }
 
-  // Snapshot .pen file hash before Claude runs
   const beforeHash = await hashFile(mapping.penFile);
 
   const prompt = await buildCodeToPenPrompt(mapping, changedFiles);
@@ -47,17 +47,37 @@ export async function syncCodeToPen(
     };
   }
 
-  // Snapshot .pen file hash after Claude runs and diff
-  const afterHash = await hashFile(mapping.penFile);
-  const penChanged = beforeHash !== afterHash;
-
-  // Read and snapshot the .pen file after sync for state persistence
+  let penChanged = false;
   let penSnapshot;
   try {
     const penRaw = await readFile(mapping.penFile, "utf-8");
-    penSnapshot = snapshotPenFile(mapping.penFile, penRaw);
+    const afterHash = createHash("sha256").update(penRaw).digest("hex");
+    penChanged = beforeHash !== afterHash;
+    const snapshot = snapshotPenFile(mapping.penFile, penRaw);
+    if (snapshot === null) {
+      log.error("Pen file could not be parsed after sync");
+      return {
+        success: false,
+        direction: "code-to-pen",
+        mappingId: mapping.id,
+        filesChanged: penChanged ? [mapping.penFile] : [],
+        error: "Pen file contains invalid JSON after code-to-pen sync",
+        tokenUsage: result.tokenUsage,
+      };
+    } else {
+      penSnapshot = snapshot;
+    }
   } catch (err) {
-    log.warn(`Could not snapshot .pen file after code-to-pen sync: ${err}`);
+    const error = `Failed to read .pen file after code-to-pen sync: ${err}`;
+    log.error(error);
+    return {
+      success: false,
+      direction: "code-to-pen",
+      mappingId: mapping.id,
+      filesChanged: [],
+      error,
+      tokenUsage: result.tokenUsage,
+    };
   }
 
   log.success(`Code-to-pen sync complete for ${mapping.id}`);

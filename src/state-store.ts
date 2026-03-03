@@ -78,7 +78,7 @@ export async function hashCodeDir(
   const files = await collectFiles(codeDir, globs);
 
   for (const file of files) {
-    const relPath = relative(codeDir, file);
+    const relPath = normalizePathForGlob(relative(codeDir, file));
     hashes[relPath] = await hashFile(file);
   }
 
@@ -110,7 +110,7 @@ async function collectFiles(
         }
         await walk(fullPath);
       } else if (entry.isFile()) {
-        const relPath = relative(dir, fullPath);
+        const relPath = normalizePathForGlob(relative(dir, fullPath));
         if (patterns.some((p) => p.test(relPath))) {
           results.push(fullPath);
         }
@@ -140,6 +140,10 @@ export function diffHashes(
   }
 
   return changed.sort();
+}
+
+function normalizePathForGlob(path: string): string {
+  return path.replaceAll("\\", "/");
 }
 
 // Convert a file glob pattern (e.g. "**\/*.tsx") to an anchored RegExp.

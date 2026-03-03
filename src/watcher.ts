@@ -70,7 +70,6 @@ export class Watcher {
       debounceMs: this.config.settings.debounceMs,
     };
 
-    // Watch .pen file (for pen-to-code or both)
     if (direction === "pen-to-code" || direction === "both") {
       const penWatcher = watch(mapping.penFile, {
         ignoreInitial: true,
@@ -80,12 +79,17 @@ export class Watcher {
       penWatcher.on("change", () => {
         this.debouncedSync(mapping, "pen-changed", debounceMs);
       });
+      penWatcher.on("add", () => {
+        this.debouncedSync(mapping, "pen-changed", debounceMs);
+      });
+      penWatcher.on("unlink", () => {
+        this.debouncedSync(mapping, "pen-changed", debounceMs);
+      });
 
       this.watchers.push(penWatcher);
       log.info(`Watching .pen file: ${mapping.penFile}`);
     }
 
-    // Watch code files (for code-to-pen or both)
     if (direction === "code-to-pen" || direction === "both") {
       const watchPaths = mapping.codeGlobs.map((g) =>
         join(mapping.codeDir, g),
@@ -109,6 +113,10 @@ export class Watcher {
 
       codeWatcher.on("add", (path) => {
         log.debug(`Code file added: ${path}`);
+        this.debouncedSync(mapping, "code-changed", debounceMs);
+      });
+      codeWatcher.on("unlink", (path) => {
+        log.debug(`Code file deleted: ${path}`);
         this.debouncedSync(mapping, "code-changed", debounceMs);
       });
 

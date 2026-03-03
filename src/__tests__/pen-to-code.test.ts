@@ -9,7 +9,6 @@ vi.mock("../claude-runner.js", () => ({
   runClaude: vi.fn(),
 }));
 
-// Mock prompt-builder (pen-to-code now imports snapshot fns from pen-snapshot directly)
 vi.mock("../prompt-builder.js", () => ({
   buildPenToCodePrompt: vi.fn().mockResolvedValue("test prompt"),
 }));
@@ -18,8 +17,6 @@ const { syncPenToCode } = await import("../pen-to-code.js");
 const { runClaude } = await import("../claude-runner.js");
 
 const mockedRunClaude = vi.mocked(runClaude);
-
-// ── Test helpers ──
 
 function makePenJson(nodes: Record<string, unknown>[]): string {
   return JSON.stringify({ children: nodes });
@@ -91,8 +88,6 @@ describe("syncPenToCode", () => {
     vi.clearAllMocks();
     await rm(dir, { recursive: true, force: true });
   });
-
-  // ── Color fast path tests ──
 
   describe("color fast path (direct CSS replacement)", () => {
     it("replaces fill color in ALL theme blocks", async () => {
@@ -217,17 +212,10 @@ describe("syncPenToCode", () => {
 `,
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: {
-          btn1: { name: "submitBtn", type: "frame", fill: "#00ff00" },
-          bg1: { name: "pageBg", type: "frame", fill: "#111111" },
-        },
-      };
+      const previousState = makePreviousState({
+        btn1: { name: "submitBtn", type: "frame", fill: "#00ff00" },
+        bg1: { name: "pageBg", type: "frame", fill: "#111111" },
+      });
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -242,8 +230,6 @@ describe("syncPenToCode", () => {
     });
   });
 
-  // ── Claude CLI path tests ──
-
   describe("Claude CLI sync (text, typography)", () => {
     it("sends text changes to Claude CLI", async () => {
       await writeFile(
@@ -251,14 +237,9 @@ describe("syncPenToCode", () => {
         makePenJson([{ id: "t1", name: "title", type: "text", content: "new title", fill: "#fff" }]),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("t1", { name: "title", type: "text", content: "old title", fill: "#fff" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("t1", { name: "title", type: "text", content: "old title", fill: "#fff" }),
+      );
 
       mockedRunClaude.mockResolvedValue({
         success: true,
@@ -281,14 +262,9 @@ describe("syncPenToCode", () => {
         makePenJson([{ id: "t1", name: "heading", type: "text", fontSize: 24, fontWeight: "700" }]),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("t1", { name: "heading", type: "text", fontSize: 16, fontWeight: "400" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("t1", { name: "heading", type: "text", fontSize: 16, fontWeight: "400" }),
+      );
 
       mockedRunClaude.mockResolvedValue({
         success: true,
@@ -309,14 +285,9 @@ describe("syncPenToCode", () => {
         makePenJson([{ id: "t1", name: "title", type: "text", content: "new" }]),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("t1", { name: "title", type: "text", content: "old" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("t1", { name: "title", type: "text", content: "old" }),
+      );
 
       mockedRunClaude.mockResolvedValue({
         success: false,
@@ -331,8 +302,6 @@ describe("syncPenToCode", () => {
       expect(result.error).toContain("Claude CLI failed");
     });
   });
-
-  // ── Mixed changes (fill + text) ──
 
   describe("mixed changes (fill + text)", () => {
     it("applies fill directly and sends text to Claude CLI", async () => {
@@ -350,17 +319,10 @@ describe("syncPenToCode", () => {
         makeCssWithThemes("accent-submit", "0 128 0"),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: {
-          btn1: { name: "submitBtn", type: "frame", fill: "#008000" },
-          t1: { name: "btnText", type: "text", content: "send", fill: "#fff" },
-        },
-      };
+      const previousState = makePreviousState({
+        btn1: { name: "submitBtn", type: "frame", fill: "#008000" },
+        t1: { name: "btnText", type: "text", content: "send", fill: "#fff" },
+      });
 
       mockedRunClaude.mockResolvedValue({
         success: true,
@@ -397,17 +359,10 @@ describe("syncPenToCode", () => {
         makeCssWithThemes("accent-submit", "0 128 0"),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: {
-          btn1: { name: "submitBtn", type: "frame", fill: "#008000" },
-          t1: { name: "title", type: "text", content: "old" },
-        },
-      };
+      const previousState = makePreviousState({
+        btn1: { name: "submitBtn", type: "frame", fill: "#008000" },
+        t1: { name: "title", type: "text", content: "old" },
+      });
 
       mockedRunClaude.mockResolvedValue({
         success: false,
@@ -429,22 +384,15 @@ describe("syncPenToCode", () => {
     });
   });
 
-  // ── Snapshot and skip behavior ──
-
   describe("snapshot diffing", () => {
     it("skips sync when no changes detected", async () => {
       const penContent = makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]);
       await writeFile(join(dir, "design.pen"), penContent);
 
       // Previous state has identical snapshot
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#ff0000" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#ff0000" }),
+      );
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -465,14 +413,9 @@ describe("syncPenToCode", () => {
         makeCssWithThemes("accent-submit", "0 0 0"),
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#000000" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#000000" }),
+      );
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -490,8 +433,6 @@ describe("syncPenToCode", () => {
     });
   });
 
-  // ── M5: Shorthand hex support ──
-
   describe("shorthand hex support", () => {
     it("expands #RGB shorthand to full hex for replacement", async () => {
       // .pen file with shorthand hex #f00 (red)
@@ -506,15 +447,9 @@ describe("syncPenToCode", () => {
         makeCssWithThemes("accent-submit", "0 255 0"),
       );
 
-      // Previous state had old color using shorthand
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#0f0" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#0f0" }),
+      );
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -525,8 +460,6 @@ describe("syncPenToCode", () => {
       expect(css).not.toContain("0 255 0");
     });
   });
-
-  // ── C1: Color collision warning ──
 
   describe("color collision detection", () => {
     it("replaces all variables sharing the same RGB value", async () => {
@@ -550,17 +483,10 @@ describe("syncPenToCode", () => {
 `,
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: {
-          btn1: { name: "submitBtn", type: "frame", fill: "#00ff00" },
-          bg1: { name: "pageBg", type: "frame", fill: "#aabbcc" },
-        },
-      };
+      const previousState = makePreviousState({
+        btn1: { name: "submitBtn", type: "frame", fill: "#00ff00" },
+        bg1: { name: "pageBg", type: "frame", fill: "#aabbcc" },
+      });
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
@@ -571,8 +497,6 @@ describe("syncPenToCode", () => {
       expect(css).not.toContain("0 255 0");
     });
   });
-
-  // ── C3: Graceful handling when old RGB not found ──
 
   describe("fill change error handling", () => {
     it("succeeds gracefully when old RGB is not found in CSS", async () => {
@@ -591,14 +515,9 @@ describe("syncPenToCode", () => {
 `,
       );
 
-      const previousState: MappingState = {
-        mappingId: "test",
-        penHash: "old",
-        codeHashes: {},
-        lastSyncTimestamp: Date.now(),
-        lastSyncDirection: "pen-to-code",
-        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
-      };
+      const previousState = makePreviousState(
+        makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
+      );
 
       // Should succeed (non-blocking) even though the old RGB is not in the CSS
       const result = await syncPenToCode(mapping, settings, previousState);

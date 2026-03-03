@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 
 const { getCssStyleFile, validatePathWithin } = await import("../utils.js");
 
-// ── getCssStyleFile ──
-
 describe("getCssStyleFile", () => {
   it("returns first .css file from styleFiles", () => {
     const mapping = {
@@ -41,8 +39,6 @@ describe("getCssStyleFile", () => {
   });
 });
 
-// ── validatePathWithin ──
-
 describe("validatePathWithin", () => {
   it("returns resolved path for valid relative file", () => {
     const result = validatePathWithin("/tmp/code", "app/globals.css");
@@ -64,5 +60,19 @@ describe("validatePathWithin", () => {
   it("allows nested paths within base directory", () => {
     const result = validatePathWithin("/tmp/code", "src/components/Button.tsx");
     expect(result).toBe("/tmp/code/src/components/Button.tsx");
+  });
+
+  it("throws on absolute file path that resolves outside base", () => {
+    expect(() => validatePathWithin("/tmp/code", "/etc/passwd")).toThrow("Path traversal detected");
+  });
+
+  it("allows directory names starting with dots (e.g. '..theme')", () => {
+    // "..theme/globals.css" resolves inside base — must not be falsely rejected
+    const result = validatePathWithin("/tmp/code", "..theme/globals.css");
+    expect(result).toBe("/tmp/code/..theme/globals.css");
+  });
+
+  it("throws on exact '..' as relative path", () => {
+    expect(() => validatePathWithin("/tmp/code/sub", "..")).toThrow("Path traversal detected");
   });
 });

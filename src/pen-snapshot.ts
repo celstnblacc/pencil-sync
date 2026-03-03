@@ -1,8 +1,6 @@
 import { log } from "./logger.js";
 import type { PenNodeSnapshot, PenDiffEntry } from "./types.js";
 
-// ── .pen node types and tracked properties ──
-
 interface PenNode {
   id?: string;
   name?: string;
@@ -18,8 +16,6 @@ interface PenNode {
 }
 
 const TRACKED_PROPS = ["fill", "content", "fontSize", "fontWeight", "fontFamily", "cornerRadius"] as const;
-
-// ── Snapshot and diff logic ──
 
 function flattenPenNodes(node: PenNode, snapshot: PenNodeSnapshot): void {
   if (node.id) {
@@ -44,7 +40,11 @@ function flattenPenNodes(node: PenNode, snapshot: PenNodeSnapshot): void {
   }
 }
 
-export function snapshotPenFile(penFile: string, raw: string): PenNodeSnapshot {
+/**
+ * Returns a snapshot of tracked visual properties, or null if the file couldn't be parsed.
+ * An empty object {} means "valid file, no tracked nodes" — distinct from null (corruption).
+ */
+export function snapshotPenFile(penFile: string, raw: string): PenNodeSnapshot | null {
   try {
     const pen = JSON.parse(raw);
     const snapshot: PenNodeSnapshot = {};
@@ -54,7 +54,7 @@ export function snapshotPenFile(penFile: string, raw: string): PenNodeSnapshot {
     return snapshot;
   } catch (err) {
     log.error(`Failed to parse .pen file: ${err}`);
-    return {};
+    return null;
   }
 }
 

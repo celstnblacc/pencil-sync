@@ -52,6 +52,7 @@ export interface SyncState {
 
 export interface SyncResult {
   success: boolean;
+  skipped?: boolean;
   direction: SyncDirection;
   mappingId: string;
   filesChanged: string[];

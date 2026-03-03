@@ -18,7 +18,6 @@ vi.mock("../claude-runner.js", async (importOriginal) => {
   };
 });
 
-// Mock prompt-builder
 vi.mock("../prompt-builder.js", () => ({
   buildPenToCodePrompt: vi.fn().mockResolvedValue("pen-to-code prompt"),
   buildCodeToPenPrompt: vi.fn().mockResolvedValue("code-to-pen prompt"),
@@ -42,8 +41,10 @@ vi.mock("../utils.js", () => ({
 
 const { SyncEngine } = await import("../sync-engine.js");
 const { runClaude } = await import("../claude-runner.js");
+const { diffPenSnapshots } = await import("../pen-snapshot.js");
 
 const mockedRunClaude = vi.mocked(runClaude);
+const mockedDiffPenSnapshots = vi.mocked(diffPenSnapshots);
 
 describe("SyncEngine", () => {
   let dir: string;
@@ -85,6 +86,9 @@ describe("SyncEngine", () => {
   afterEach(async () => {
     engine.shutdown();
     vi.clearAllMocks();
+    mockedDiffPenSnapshots.mockReturnValue([
+      { nodeId: "t1", nodeName: "title", prop: "content", oldValue: "old", newValue: "new" },
+    ]);
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -183,7 +187,7 @@ describe("SyncEngine", () => {
     });
   });
 
-  // Rebuild engine with a non-interactive conflict strategy to avoid stdin blocking
+  /** Rebuild engine with a non-interactive conflict strategy to avoid stdin blocking. */
   async function withStrategy(strategy: "pen-wins" | "code-wins" | "auto-merge") {
     config.settings.conflictStrategy = strategy;
     engine = new SyncEngine(config);
@@ -318,6 +322,32 @@ describe("SyncEngine", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("Budget");
     });
+
+    it("allows fill-only pen-to-code fast path when budget is exhausted", async () => {
+      config.settings.maxBudgetUsd = 0.001;
+      await withStrategy("pen-wins");
+
+      mockedRunClaude.mockResolvedValueOnce({
+        success: true, stdout: "Done", stderr: "", exitCode: 0,
+        tokenUsage: { input: 50_000, output: 10_000 },
+      });
+      await engine.syncMapping(mapping, "pen-changed");
+      engine.getLockManager().forceRelease(mapping.id);
+
+      const fillOnlyDiff = [
+        { nodeId: "btn1", nodeName: "submitBtn", prop: "fill", oldValue: "#00ff00", newValue: "#ff0000" },
+      ];
+      // Called once during preflight and again in syncPenToCode.
+      mockedDiffPenSnapshots
+        .mockReturnValueOnce(fillOnlyDiff)
+        .mockReturnValueOnce(fillOnlyDiff);
+
+      const result = await engine.syncMapping(mapping, "pen-changed");
+      expect(result.success).toBe(true);
+      expect(result.error).toBeUndefined();
+      // First sync uses Claude, second fill-only sync should not.
+      expect(mockedRunClaude).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("non-interactive mode", () => {
@@ -330,6 +360,7 @@ describe("SyncEngine", () => {
       // Setup conflict
       await engine.syncMapping(mapping, "pen-changed");
       engine.getLockManager().forceRelease(mapping.id);
+      const beforeSkipState = engine.getStateStore().getMappingState(mapping.id);
       await writeFile(join(dir, "design.pen"), JSON.stringify({ children: [{ id: "changed" }] }));
       await writeFile(join(dir, "code", "app.tsx"), "modified code");
 
@@ -341,7 +372,10 @@ describe("SyncEngine", () => {
         const result = await engine.syncMapping(mapping, "pen-changed");
         // Should succeed (skip) without hanging on readline
         expect(result.success).toBe(true);
+        expect(result.skipped).toBe(true);
         expect(result.filesChanged).toEqual([]);
+        const afterSkipState = engine.getStateStore().getMappingState(mapping.id);
+        expect(afterSkipState).toEqual(beforeSkipState);
       } finally {
         Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
       }

@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, open } from "node:fs/promises";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MappingConfig, PenDiffEntry } from "./types.js";
@@ -42,12 +42,20 @@ async function loadStyleFiles(mapping: MappingConfig): Promise<string> {
     }
 
     try {
-      const fileStat = await stat(fullPath);
-      let content = await readFile(fullPath, "utf-8");
-
-      if (fileStat.size > MAX_STYLE_FILE_BYTES) {
-        content = content.slice(0, MAX_STYLE_FILE_BYTES) + "\n/* ... truncated ... */";
-        log.warn(`Style file ${filePath} exceeds 50KB, truncated for prompt`);
+      const fh = await open(fullPath, "r");
+      let content: string;
+      try {
+        const { size } = await fh.stat();
+        if (size > MAX_STYLE_FILE_BYTES) {
+          const buf = Buffer.alloc(MAX_STYLE_FILE_BYTES);
+          const { bytesRead } = await fh.read(buf, 0, MAX_STYLE_FILE_BYTES, 0);
+          content = buf.subarray(0, bytesRead).toString("utf-8") + "\n/* ... truncated ... */";
+          log.warn(`Style file ${filePath} exceeds 50KB, truncated for prompt`);
+        } else {
+          content = await fh.readFile("utf-8");
+        }
+      } finally {
+        await fh.close();
       }
 
       const relPath = relative(mapping.codeDir, fullPath);
@@ -60,8 +68,6 @@ async function loadStyleFiles(mapping: MappingConfig): Promise<string> {
   if (sections.length === 0) return "";
   return `\n## Current Style Files\n\n${sections.join("\n\n")}\n`;
 }
-
-// ── Prompt builders ──
 
 export async function buildPenToCodePrompt(
   mapping: MappingConfig,

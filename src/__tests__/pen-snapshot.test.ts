@@ -4,8 +4,6 @@ const {
   snapshotPenFile, diffPenSnapshots,
 } = await import("../pen-snapshot.js");
 
-// ── snapshotPenFile (moved from prompt-builder.test.ts) ──
-
 describe("snapshotPenFile", () => {
   it("extracts tracked properties from .pen JSON", () => {
     const pen = JSON.stringify({
@@ -22,7 +20,7 @@ describe("snapshotPenFile", () => {
       ],
     });
 
-    const snapshot = snapshotPenFile("/tmp/test.pen", pen);
+    const snapshot = snapshotPenFile("/tmp/test.pen", pen)!;
 
     expect(snapshot["btn1"]).toBeDefined();
     expect(snapshot["btn1"].name).toBe("submitBtn");
@@ -55,7 +53,7 @@ describe("snapshotPenFile", () => {
       ],
     });
 
-    const snapshot = snapshotPenFile("/tmp/test.pen", pen);
+    const snapshot = snapshotPenFile("/tmp/test.pen", pen)!;
 
     expect(snapshot["page"]).toBeDefined();
     expect(snapshot["header"]).toBeDefined();
@@ -64,9 +62,9 @@ describe("snapshotPenFile", () => {
     expect(snapshot["logo"].fontSize).toBe(24);
   });
 
-  it("returns empty snapshot for invalid JSON", () => {
+  it("returns null for invalid JSON", () => {
     const snapshot = snapshotPenFile("/tmp/bad.pen", "not valid json {{{");
-    expect(snapshot).toEqual({});
+    expect(snapshot).toBeNull();
   });
 
   it("returns empty snapshot for .pen with no children", () => {
@@ -74,8 +72,6 @@ describe("snapshotPenFile", () => {
     expect(snapshot).toEqual({});
   });
 });
-
-// ── diffPenSnapshots (moved from prompt-builder.test.ts) ──
 
 describe("diffPenSnapshots", () => {
   it("detects fill changes", () => {

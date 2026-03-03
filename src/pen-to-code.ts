@@ -4,7 +4,7 @@ import { runClaude } from "./claude-runner.js";
 import { buildPenToCodePrompt } from "./prompt-builder.js";
 import { snapshotPenFile, diffPenSnapshots } from "./pen-snapshot.js";
 import { getCssStyleFile, validatePathWithin } from "./utils.js";
-import type { PenDiffEntry, FillChangeResult, MappingConfig, Settings, SyncResult, MappingState } from "./types.js";
+import type { PenDiffEntry, FillChangeResult, MappingConfig, Settings, SyncResult, MappingState, PenNodeSnapshot } from "./types.js";
 import { hashCodeDir, diffHashes } from "./state-store.js";
 
 /**
@@ -27,6 +27,11 @@ function hexToRgbChannels(hex: string): string {
   return `${r} ${g} ${b}`;
 }
 
+function recordError(result: FillChangeResult, msg: string, level: "warn" | "error" = "warn"): void {
+  result.errors.push(msg);
+  log[level](msg);
+}
+
 /**
  * Apply fill (color) changes directly to CSS files by replacing variable values.
  * This is a deterministic fast path that doesn't need Claude CLI.
@@ -36,11 +41,6 @@ function hexToRgbChannels(hex: string): string {
  *
  * Returns structured FillChangeResult with both filesChanged and errors.
  */
-function recordError(result: FillChangeResult, msg: string, level: "warn" | "error" = "warn"): void {
-  result.errors.push(msg);
-  log[level](msg);
-}
-
 async function applyFillChanges(
   mapping: MappingConfig,
   fillDiffs: PenDiffEntry[],
@@ -94,7 +94,6 @@ async function applyFillChanges(
     const allMatches = [...css.matchAll(pattern)];
     const matchedVarNames = new Set(
       allMatches.map(m => {
-        // Extract the variable name from the captured group (e.g. "--color-foo: ")
         const varDecl = m[1].trim();
         return varDecl.replace(/:\s*$/, "");
       }),
@@ -132,6 +131,68 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Apply fill changes directly and return changed file list. Non-blocking errors are logged. */
+async function executeFillFastPath(
+  mapping: MappingConfig,
+  fillDiffs: PenDiffEntry[],
+): Promise<string[]> {
+  log.info(`Applying ${fillDiffs.length} color change(s) directly (no Claude CLI needed)`);
+  const fillResult = await applyFillChanges(mapping, fillDiffs);
+  for (const err of fillResult.errors) {
+    log.warn(`Fill change issue: ${err}`);
+  }
+  return fillResult.filesChanged;
+}
+
+/** Delegate non-fill changes to Claude CLI. Returns changed files or a partial-failure result. */
+async function executeClaudeSync(
+  mapping: MappingConfig,
+  settings: Settings,
+  otherDiffs: PenDiffEntry[],
+  priorFilesChanged: string[],
+  penSnapshot: PenNodeSnapshot,
+): Promise<SyncResult> {
+  log.info(`Sending ${otherDiffs.length} non-color change(s) to Claude CLI`);
+
+  const beforeHashes = await hashCodeDir(mapping.codeDir, mapping.codeGlobs);
+  const prompt = await buildPenToCodePrompt(mapping, undefined, otherDiffs);
+  log.debug(`Prompt length: ${prompt.length} chars`);
+
+  const result = await runClaude({
+    prompt,
+    model: settings.model,
+    cwd: mapping.codeDir,
+  });
+
+  if (!result.success) {
+    log.error(`Claude sync failed for non-color changes: ${result.stderr.slice(0, 200)}`);
+    return {
+      success: priorFilesChanged.length > 0,
+      direction: "pen-to-code",
+      mappingId: mapping.id,
+      filesChanged: priorFilesChanged,
+      error: `Claude CLI failed for text/typography changes: ${result.stderr.slice(0, 300)}`,
+      tokenUsage: result.tokenUsage,
+      penSnapshot,
+    };
+  }
+
+  const afterHashes = await hashCodeDir(mapping.codeDir, mapping.codeGlobs);
+  const claudeFiles = diffHashes(beforeHashes, afterHashes);
+  const allFiles = [...new Set([...priorFilesChanged, ...claudeFiles])];
+
+  log.success(`Pen-to-code sync complete: ${allFiles.length} file(s) updated`);
+
+  return {
+    success: true,
+    direction: "pen-to-code",
+    mappingId: mapping.id,
+    filesChanged: allFiles,
+    tokenUsage: result.tokenUsage,
+    penSnapshot,
+  };
+}
+
 export async function syncPenToCode(
   mapping: MappingConfig,
   settings: Settings,
@@ -139,7 +200,6 @@ export async function syncPenToCode(
 ): Promise<SyncResult> {
   log.sync("pen-to-code", mapping.id, "Starting design → code sync");
 
-  // Read the .pen file and compute diff against previous snapshot
   let penRaw: string;
   try {
     penRaw = await readFile(mapping.penFile, "utf-8");
@@ -153,9 +213,23 @@ export async function syncPenToCode(
     };
   }
 
-  const newSnapshot = snapshotPenFile(mapping.penFile, penRaw);
+  const snapshot = snapshotPenFile(mapping.penFile, penRaw);
   const oldSnapshot = previousState?.penSnapshot ?? {};
-  const diffs = diffPenSnapshots(oldSnapshot, newSnapshot);
+
+  // null = parse failure (corruption); {} = valid file with no tracked nodes
+  if (snapshot === null) {
+    log.warn("Pen file could not be parsed — preserving previous state");
+    return {
+      success: false,
+      direction: "pen-to-code",
+      mappingId: mapping.id,
+      filesChanged: [],
+      error: "Pen file contains invalid JSON",
+      penSnapshot: oldSnapshot,
+    };
+  }
+
+  const diffs = diffPenSnapshots(oldSnapshot, snapshot);
 
   if (diffs.length === 0 && Object.keys(oldSnapshot).length > 0) {
     log.info("No visual property changes detected in .pen file, skipping sync");
@@ -164,7 +238,7 @@ export async function syncPenToCode(
       direction: "pen-to-code",
       mappingId: mapping.id,
       filesChanged: [],
-      penSnapshot: newSnapshot,
+      penSnapshot: snapshot,
     };
   }
 
@@ -173,75 +247,24 @@ export async function syncPenToCode(
     log.info(`  ${d.nodeName}.${d.prop}: ${d.oldValue} → ${d.newValue}`);
   }
 
-  // Split diffs: fill changes get fast path, everything else goes to Claude
   const fillDiffs = diffs.filter((d) => d.prop === "fill");
   const otherDiffs = diffs.filter((d) => d.prop !== "fill");
 
-  const allFilesChanged: string[] = [];
+  const fillFilesChanged = fillDiffs.length > 0
+    ? await executeFillFastPath(mapping, fillDiffs)
+    : [];
 
-  // ── Fast path: apply fill/color changes directly ──
-  if (fillDiffs.length > 0) {
-    log.info(`Applying ${fillDiffs.length} color change(s) directly (no Claude CLI needed)`);
-    const fillResult = await applyFillChanges(mapping, fillDiffs);
-    allFilesChanged.push(...fillResult.filesChanged);
-    // Log fill errors as warnings (non-blocking)
-    for (const err of fillResult.errors) {
-      log.warn(`Fill change issue: ${err}`);
-    }
-  }
-
-  // ── Slow path: delegate non-fill changes to Claude CLI ──
   if (otherDiffs.length > 0) {
-    log.info(`Sending ${otherDiffs.length} non-color change(s) to Claude CLI`);
-
-    const beforeHashes = await hashCodeDir(mapping.codeDir, mapping.codeGlobs);
-    const prompt = await buildPenToCodePrompt(mapping, undefined, otherDiffs);
-    log.debug(`Prompt length: ${prompt.length} chars`);
-
-    const result = await runClaude({
-      prompt,
-      model: settings.model,
-      cwd: mapping.codeDir,
-    });
-
-    if (!result.success) {
-      log.error(`Claude sync failed for non-color changes: ${result.stderr.slice(0, 200)}`);
-      // Color changes already applied, so partial success
-      return {
-        success: allFilesChanged.length > 0,
-        direction: "pen-to-code",
-        mappingId: mapping.id,
-        filesChanged: allFilesChanged,
-        error: `Claude CLI failed for text/typography changes: ${result.stderr.slice(0, 300)}`,
-        tokenUsage: result.tokenUsage,
-        penSnapshot: newSnapshot,
-      };
-    }
-
-    const afterHashes = await hashCodeDir(mapping.codeDir, mapping.codeGlobs);
-    const claudeFiles = diffHashes(beforeHashes, afterHashes);
-    allFilesChanged.push(...claudeFiles);
-
-    log.success(`Pen-to-code sync complete: ${allFilesChanged.length} file(s) updated`);
-
-    return {
-      success: true,
-      direction: "pen-to-code",
-      mappingId: mapping.id,
-      filesChanged: [...new Set(allFilesChanged)],
-      tokenUsage: result.tokenUsage,
-      penSnapshot: newSnapshot,
-    };
+    return executeClaudeSync(mapping, settings, otherDiffs, fillFilesChanged, snapshot);
   }
 
-  // Only fill changes — no Claude needed
-  log.success(`Pen-to-code sync complete (fast path): ${allFilesChanged.length} file(s) updated`);
+  log.success(`Pen-to-code sync complete (fast path): ${fillFilesChanged.length} file(s) updated`);
 
   return {
     success: true,
     direction: "pen-to-code",
     mappingId: mapping.id,
-    filesChanged: [...new Set(allFilesChanged)],
-    penSnapshot: newSnapshot,
+    filesChanged: [...new Set(fillFilesChanged)],
+    penSnapshot: snapshot,
   };
 }
