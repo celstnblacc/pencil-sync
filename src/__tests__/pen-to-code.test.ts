@@ -1,23 +1,55 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { MappingConfig, Settings } from "../types.js";
+import type { MappingConfig, MappingState, Settings, PenNodeSnapshot } from "../types.js";
 
 // Mock claude-runner before importing the module under test
 vi.mock("../claude-runner.js", () => ({
   runClaude: vi.fn(),
 }));
 
-// Mock prompt-builder
-vi.mock("../prompt-builder.js", () => ({
-  buildPenToCodePrompt: vi.fn().mockResolvedValue("test prompt"),
-}));
+// Partially mock prompt-builder — keep real snapshotPenFile and diffPenSnapshots
+vi.mock("../prompt-builder.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../prompt-builder.js")>();
+  return {
+    ...original,
+    buildPenToCodePrompt: vi.fn().mockResolvedValue("test prompt"),
+  };
+});
 
 const { syncPenToCode } = await import("../pen-to-code.js");
 const { runClaude } = await import("../claude-runner.js");
 
 const mockedRunClaude = vi.mocked(runClaude);
+
+// ── Test helpers ──
+
+function makePenJson(nodes: Record<string, unknown>[]): string {
+  return JSON.stringify({ children: nodes });
+}
+
+function makeCssWithThemes(varName: string, rgb: string): string {
+  return `:root {
+  --color-primary: 255 132 0;
+  --color-${varName}: ${rgb};
+}
+
+[data-theme="monokai"] {
+  --color-primary: 166 226 46;
+  --color-${varName}: ${rgb};
+}
+
+[data-theme="nord"] {
+  --color-primary: 136 192 208;
+  --color-${varName}: ${rgb};
+}
+`;
+}
+
+function makeSnapshot(nodeId: string, props: Record<string, string | number>): PenNodeSnapshot {
+  return { [nodeId]: props };
+}
 
 describe("syncPenToCode", () => {
   let dir: string;
@@ -25,17 +57,17 @@ describe("syncPenToCode", () => {
   let settings: Settings;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "pencil-test-"));
-    await mkdir(join(dir, "code"));
+    dir = await mkdtemp(join(tmpdir(), "pencil-p2c-"));
+    await mkdir(join(dir, "code", "app"), { recursive: true });
     await writeFile(join(dir, "code", "app.tsx"), "original content");
-    await writeFile(join(dir, "design.pen"), "pen content");
 
     mapping = {
       id: "test",
       penFile: join(dir, "design.pen"),
       codeDir: join(dir, "code"),
-      codeGlobs: ["**/*.tsx"],
+      codeGlobs: ["**/*.tsx", "**/*.css"],
       direction: "both",
+      styleFiles: ["app/globals.css"],
     };
 
     settings = {
@@ -53,61 +85,422 @@ describe("syncPenToCode", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("detects files changed by Claude via filesystem diff", async () => {
-    mockedRunClaude.mockImplementation(async () => {
-      // Simulate Claude modifying a file and creating a new one
-      await writeFile(join(dir, "code", "app.tsx"), "modified content");
-      await writeFile(join(dir, "code", "new.tsx"), "new file");
-      return { success: true, stdout: "Done", stderr: "", exitCode: 0 };
+  // ── Color fast path tests ──
+
+  describe("color fast path (direct CSS replacement)", () => {
+    it("replaces fill color in ALL theme blocks", async () => {
+      // .pen file with new color
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]),
+      );
+
+      // CSS file with old color in 3 theme blocks
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        makeCssWithThemes("accent-submit", "172 255 204"),
+      );
+
+      // Previous state had the old color
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#acffcc" }),
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      expect(result.filesChanged).toContain("app/globals.css");
+
+      // Verify ALL theme blocks were updated
+      const css = await readFile(join(dir, "code", "app", "globals.css"), "utf-8");
+      const matches = css.match(/255 0 0/g);
+      expect(matches).toHaveLength(3); // :root + monokai + nord
+      expect(css).not.toContain("172 255 204");
     });
 
-    const result = await syncPenToCode(mapping, settings);
+    it("handles #RRGGBBAA format (strips alpha)", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#acffccff" }]),
+      );
 
-    expect(result.success).toBe(true);
-    expect(result.direction).toBe("pen-to-code");
-    expect(result.filesChanged).toContain("app.tsx");
-    expect(result.filesChanged).toContain("new.tsx");
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        makeCssWithThemes("accent-submit", "64 20 23"),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#401417ff" }),
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      const css = await readFile(join(dir, "code", "app", "globals.css"), "utf-8");
+      // #acffcc → 172 255 204
+      expect(css).toContain("172 255 204");
+      expect(css).not.toContain("64 20 23");
+    });
+
+    it("does NOT call Claude CLI for fill-only changes", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]),
+      );
+
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        makeCssWithThemes("accent-submit", "0 255 0"),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      expect(mockedRunClaude).not.toHaveBeenCalled();
+      expect(result.tokenUsage).toBeUndefined();
+    });
+
+    it("returns empty filesChanged when no CSS file in styleFiles", async () => {
+      const mappingNoCss: MappingConfig = {
+        ...mapping,
+        styleFiles: ["tailwind.config.js"], // no .css file
+      };
+
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#00ff00" }),
+      };
+
+      const result = await syncPenToCode(mappingNoCss, settings, previousState);
+
+      expect(result.success).toBe(true);
+      expect(result.filesChanged).toEqual([]);
+    });
+
+    it("handles multiple fill changes in a single sync", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([
+          { id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" },
+          { id: "bg1", name: "pageBg", type: "frame", fill: "#0000ff" },
+        ]),
+      );
+
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        `:root {
+  --color-accent-submit: 0 255 0;
+  --color-bg-dark: 17 17 17;
+}
+[data-theme="monokai"] {
+  --color-accent-submit: 0 255 0;
+  --color-bg-dark: 17 17 17;
+}
+`,
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: {
+          btn1: { name: "submitBtn", type: "frame", fill: "#00ff00" },
+          bg1: { name: "pageBg", type: "frame", fill: "#111111" },
+        },
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      const css = await readFile(join(dir, "code", "app", "globals.css"), "utf-8");
+      // #ff0000 → 255 0 0 (replaced from 0 255 0)
+      expect(css).toContain("255 0 0");
+      expect(css).not.toContain("0 255 0");
+      // #0000ff → 0 0 255 (replaced from 17 17 17)
+      expect(css).toContain("0 0 255");
+      expect(css).not.toContain("17 17 17");
+    });
   });
 
-  it("returns empty filesChanged when Claude makes no file changes", async () => {
-    mockedRunClaude.mockResolvedValue({
-      success: true,
-      stdout: "No changes needed",
-      stderr: "",
-      exitCode: 0,
+  // ── Claude CLI path tests ──
+
+  describe("Claude CLI sync (text, typography)", () => {
+    it("sends text changes to Claude CLI", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "t1", name: "title", type: "text", content: "new title", fill: "#fff" }]),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("t1", { name: "title", type: "text", content: "old title", fill: "#fff" }),
+      };
+
+      mockedRunClaude.mockResolvedValue({
+        success: true,
+        stdout: "Updated title text",
+        stderr: "",
+        exitCode: 0,
+        tokenUsage: { input: 500, output: 100 },
+      });
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      expect(mockedRunClaude).toHaveBeenCalledTimes(1);
+      expect(result.tokenUsage).toEqual({ input: 500, output: 100 });
     });
 
-    const result = await syncPenToCode(mapping, settings);
+    it("sends typography changes to Claude CLI", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "t1", name: "heading", type: "text", fontSize: 24, fontWeight: "700" }]),
+      );
 
-    expect(result.success).toBe(true);
-    expect(result.filesChanged).toEqual([]);
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("t1", { name: "heading", type: "text", fontSize: 16, fontWeight: "400" }),
+      };
+
+      mockedRunClaude.mockResolvedValue({
+        success: true,
+        stdout: "Updated font size and weight",
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      expect(mockedRunClaude).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns error when Claude CLI fails for text changes", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "t1", name: "title", type: "text", content: "new" }]),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("t1", { name: "title", type: "text", content: "old" }),
+      };
+
+      mockedRunClaude.mockResolvedValue({
+        success: false,
+        stdout: "",
+        stderr: "API error: rate limited",
+        exitCode: 1,
+      });
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Claude CLI failed");
+    });
   });
 
-  it("returns error result on Claude failure", async () => {
-    mockedRunClaude.mockResolvedValue({
-      success: false,
-      stdout: "",
-      stderr: "API error: rate limited",
-      exitCode: 1,
+  // ── Mixed changes (fill + text) ──
+
+  describe("mixed changes (fill + text)", () => {
+    it("applies fill directly and sends text to Claude CLI", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([
+          { id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" },
+          { id: "t1", name: "btnText", type: "text", content: "submit", fill: "#fff" },
+        ]),
+      );
+
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        makeCssWithThemes("accent-submit", "0 128 0"),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: {
+          btn1: { name: "submitBtn", type: "frame", fill: "#008000" },
+          t1: { name: "btnText", type: "text", content: "send", fill: "#fff" },
+        },
+      };
+
+      mockedRunClaude.mockResolvedValue({
+        success: true,
+        stdout: "Updated text",
+        stderr: "",
+        exitCode: 0,
+        tokenUsage: { input: 300, output: 50 },
+      });
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      // Fill change applied directly
+      const css = await readFile(join(dir, "code", "app", "globals.css"), "utf-8");
+      expect(css).toContain("255 0 0");
+      expect(css).not.toContain("0 128 0");
+      // Text change sent to Claude
+      expect(mockedRunClaude).toHaveBeenCalledTimes(1);
+      expect(result.filesChanged).toContain("app/globals.css");
     });
 
-    const result = await syncPenToCode(mapping, settings);
+    it("reports partial success when fill succeeds but Claude fails", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([
+          { id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" },
+          { id: "t1", name: "title", type: "text", content: "new" },
+        ]),
+      );
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("API error");
-    expect(result.filesChanged).toEqual([]);
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        makeCssWithThemes("accent-submit", "0 128 0"),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: {
+          btn1: { name: "submitBtn", type: "frame", fill: "#008000" },
+          t1: { name: "title", type: "text", content: "old" },
+        },
+      };
+
+      mockedRunClaude.mockResolvedValue({
+        success: false,
+        stdout: "",
+        stderr: "timeout",
+        exitCode: 1,
+      });
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      // Partial success: fill changed, but Claude failed
+      expect(result.success).toBe(true); // fill succeeded
+      expect(result.error).toContain("Claude CLI failed");
+      expect(result.filesChanged).toContain("app/globals.css");
+
+      // CSS was still updated
+      const css = await readFile(join(dir, "code", "app", "globals.css"), "utf-8");
+      expect(css).toContain("255 0 0");
+    });
   });
 
-  it("propagates tokenUsage from Claude result", async () => {
-    mockedRunClaude.mockResolvedValue({
-      success: true,
-      stdout: "Done",
-      stderr: "",
-      exitCode: 0,
-      tokenUsage: { input: 1000, output: 200 },
+  // ── Snapshot and skip behavior ──
+
+  describe("snapshot diffing", () => {
+    it("skips sync when no changes detected", async () => {
+      const penContent = makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]);
+      await writeFile(join(dir, "design.pen"), penContent);
+
+      // Previous state has identical snapshot
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#ff0000" }),
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.success).toBe(true);
+      expect(result.filesChanged).toEqual([]);
+      expect(mockedRunClaude).not.toHaveBeenCalled();
     });
 
-    const result = await syncPenToCode(mapping, settings);
-    expect(result.tokenUsage).toEqual({ input: 1000, output: 200 });
+    it("returns penSnapshot in result for state persistence", async () => {
+      await writeFile(
+        join(dir, "design.pen"),
+        makePenJson([{ id: "btn1", name: "submitBtn", type: "frame", fill: "#ff0000" }]),
+      );
+
+      await mkdir(join(dir, "code", "app"), { recursive: true });
+      await writeFile(
+        join(dir, "code", "app", "globals.css"),
+        makeCssWithThemes("accent-submit", "0 0 0"),
+      );
+
+      const previousState: MappingState = {
+        mappingId: "test",
+        penHash: "old",
+        codeHashes: {},
+        lastSyncTimestamp: Date.now(),
+        lastSyncDirection: "pen-to-code",
+        penSnapshot: makeSnapshot("btn1", { name: "submitBtn", type: "frame", fill: "#000000" }),
+      };
+
+      const result = await syncPenToCode(mapping, settings, previousState);
+
+      expect(result.penSnapshot).toBeDefined();
+      expect(result.penSnapshot!["btn1"]).toBeDefined();
+      expect(result.penSnapshot!["btn1"].fill).toBe("#ff0000");
+    });
+
+    it("returns error when .pen file is missing", async () => {
+      // Don't create the .pen file
+      const result = await syncPenToCode(mapping, settings);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Failed to read .pen file");
+    });
   });
 });

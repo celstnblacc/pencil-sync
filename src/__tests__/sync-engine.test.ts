@@ -19,11 +19,16 @@ vi.mock("../claude-runner.js", async (importOriginal) => {
   };
 });
 
-// Mock prompt-builder
+// Mock prompt-builder (include snapshot/diff exports used by pen-to-code)
+// Return a non-fill diff so Claude CLI gets called for pen-to-code syncs
 vi.mock("../prompt-builder.js", () => ({
   buildPenToCodePrompt: vi.fn().mockResolvedValue("pen-to-code prompt"),
   buildCodeToPenPrompt: vi.fn().mockResolvedValue("code-to-pen prompt"),
   buildConflictPrompt: vi.fn().mockResolvedValue("conflict prompt"),
+  snapshotPenFile: vi.fn().mockReturnValue({}),
+  diffPenSnapshots: vi.fn().mockReturnValue([
+    { nodeId: "t1", nodeName: "title", prop: "content", oldValue: "old", newValue: "new" },
+  ]),
 }));
 
 const { SyncEngine } = await import("../sync-engine.js");
@@ -41,7 +46,7 @@ describe("SyncEngine", () => {
     dir = await mkdtemp(join(tmpdir(), "pencil-test-"));
     await mkdir(join(dir, "code"));
     await writeFile(join(dir, "code", "app.tsx"), "content");
-    await writeFile(join(dir, "design.pen"), "pen content");
+    await writeFile(join(dir, "design.pen"), JSON.stringify({ children: [] }));
 
     mapping = {
       id: "test",
@@ -145,7 +150,10 @@ describe("SyncEngine", () => {
       });
       await lowBudgetEngine.syncMapping(mapping, "pen-changed");
 
-      // Second sync should be blocked
+      // Force-release lock so second sync isn't blocked by grace period
+      lowBudgetEngine.getLockManager().forceRelease(mapping.id);
+
+      // Second sync should be blocked by budget, not lock
       const result = await lowBudgetEngine.syncMapping(mapping, "pen-changed");
       expect(result.success).toBe(false);
       expect(result.error).toContain("Budget");
