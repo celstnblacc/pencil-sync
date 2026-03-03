@@ -164,6 +164,7 @@ Config file: `pencil-sync.config.json` (also supports `.pencil-sync.json` and JS
 | `penScreens` | No | Specific screens to sync (defaults to all) |
 | `framework` | No | Auto-detected: `nextjs`, `react`, `vue`, `svelte`, `astro` |
 | `styling` | No | Auto-detected: `tailwind`, `styled-components`, `css-modules`, `css` |
+| `styleFiles` | No | CSS/config files with design tokens (e.g., `["app/globals.css", "tailwind.config.js"]`). Enables the color fast path and provides context to Claude for other changes. |
 
 ### Settings
 
@@ -185,11 +186,41 @@ File Change (chokidar)
       -> LockManager.acquire()
       -> ConflictDetector (hash comparison)
       -> syncPenToCode() or syncCodeToPen()
-        -> Build prompt from markdown template
-        -> Spawn Claude CLI (claude -p --max-turns 1)
-        -> Diff file hashes before/after to detect changes
+        -> Snapshot .pen nodes, diff against previous state
+        -> Fill changes:  direct CSS variable replacement (fast path)
+        -> Other changes: build prompt → spawn Claude CLI → diff file hashes
       -> StateStore.updateMappingState()
       -> LockManager.release() (with grace period)
+```
+
+### Color sync: direct replacement (fast path)
+
+Fill/color changes are applied directly by pencil-sync as a find-and-replace in your CSS file. This is faster and more reliable than Claude CLI for colors because it's a mechanical hex→RGB conversion — no reasoning needed. Claude CLI is still used for text, typography, and layout changes that require understanding the component structure.
+
+When a `.pen` node's `fill` property changes:
+
+1. The old and new hex values are converted to space-separated RGB channels (`#224846` → `34 72 70`)
+2. All CSS variable declarations matching the old RGB value are replaced with the new RGB in **every theme block** (`:root`, `[data-theme="monokai"]`, `[data-theme="nord"]`, etc.)
+3. The updated CSS file is written back
+
+**Requirements for the fast path:**
+
+- `styleFiles` must include a `.css` file in the mapping config
+- CSS variables must use the RGB channel format: `--color-token-name: R G B;`
+- Multiple theme blocks are supported — all occurrences are updated in one pass
+
+Non-color changes (text content, font size, font weight, etc.) are still delegated to Claude CLI with a focused diff-based prompt.
+
+```jsonc
+// Example: enable the fast path by adding styleFiles
+{
+  "id": "my-app",
+  "penFile": "./design.pen",
+  "codeDir": "./src",
+  "codeGlobs": ["**/*.tsx", "**/*.css"],
+  "direction": "both",
+  "styleFiles": ["app/globals.css", "tailwind.config.js"]
+}
 ```
 
 ### Change detection

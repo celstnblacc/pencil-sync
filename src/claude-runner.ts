@@ -44,6 +44,8 @@ export function parseTokenUsage(stderr: string): TokenUsage | undefined {
   return undefined;
 }
 
+const CLAUDE_TIMEOUT_MS = 300_000; // 5 min max
+
 export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const { prompt, model, cwd } = options;
 
@@ -56,21 +58,55 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
     "text",
     "--verbose",
     "--max-turns",
-    "1",
+    "3",
+    "--allowedTools",
+    "Edit,Write,Read,Glob,Grep",
   ];
 
   log.debug(`Spawning: claude ${args.slice(0, 4).join(" ")}...`);
 
+  // Strip env vars that prevent nested Claude CLI sessions
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.CLAUDECODE;
+  delete cleanEnv.CLAUDE_CODE_SESSION;
+
   return new Promise((resolve) => {
+    let resolved = false;
+
     const proc = spawn("claude", args, {
       cwd: cwd ?? process.cwd(),
-      env: { ...process.env },
+      env: cleanEnv,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 300_000, // 5 min max
     });
 
     let stdout = "";
     let stderr = "";
+
+    // Hard timeout: kill process if it hangs
+    const timeoutTimer = setTimeout(() => {
+      if (!resolved) {
+        log.error(`Claude CLI timed out after ${CLAUDE_TIMEOUT_MS / 1000}s, killing process`);
+        proc.kill("SIGTERM");
+        // Force kill after 5s if SIGTERM doesn't work
+        setTimeout(() => {
+          try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+        }, 5000);
+      }
+    }, CLAUDE_TIMEOUT_MS);
+
+    const finish = (exitCode: number) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutTimer);
+
+      if (exitCode !== 0) {
+        log.error(`Claude CLI exited with code ${exitCode}`);
+        if (stderr) log.debug(`stderr: ${stderr.slice(0, 500)}`);
+      }
+
+      const tokenUsage = parseTokenUsage(stderr);
+      resolve({ success: exitCode === 0, stdout, stderr, exitCode, tokenUsage });
+    };
 
     proc.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
@@ -81,18 +117,14 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
     });
 
     proc.on("close", (code) => {
-      const exitCode = code ?? 1;
-      if (exitCode !== 0) {
-        log.error(`Claude CLI exited with code ${exitCode}`);
-        if (stderr) log.debug(`stderr: ${stderr.slice(0, 500)}`);
-      }
-
-      const tokenUsage = parseTokenUsage(stderr);
-      resolve({ success: exitCode === 0, stdout, stderr, exitCode, tokenUsage });
+      finish(code ?? 1);
     });
 
     proc.on("error", (err) => {
       log.error(`Failed to spawn claude CLI: ${err.message}`);
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutTimer);
       resolve({
         success: false,
         stdout: "",

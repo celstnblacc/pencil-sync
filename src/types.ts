@@ -13,6 +13,8 @@ export interface MappingConfig {
   framework?: Framework;
   styling?: Styling;
   direction: SyncDirection;
+  /** Files containing design tokens (CSS variables, Tailwind config) — inlined into prompts */
+  styleFiles?: string[];
 }
 
 export interface Settings {
@@ -30,12 +32,17 @@ export interface PencilSyncConfig {
   settings: Settings;
 }
 
+export interface PenNodeSnapshot {
+  [nodeId: string]: Record<string, string | number>;
+}
+
 export interface MappingState {
   mappingId: string;
   penHash: string;
   codeHashes: Record<string, string>;
   lastSyncTimestamp: number;
   lastSyncDirection: SyncDirection | null;
+  penSnapshot?: PenNodeSnapshot;
 }
 
 export interface SyncState {
@@ -50,6 +57,7 @@ export interface SyncResult {
   filesChanged: string[];
   error?: string;
   tokenUsage?: TokenUsage;
+  penSnapshot?: PenNodeSnapshot;
 }
 
 export interface TokenUsage {

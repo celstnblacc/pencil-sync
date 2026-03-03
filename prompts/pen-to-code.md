@@ -1,49 +1,37 @@
 # Pen-to-Code Sync
 
-You are syncing a .pen design file to frontend code. Your job is to update the code to match the current design, while preserving all functional logic.
-
-## Source Design
-- **Pen file:** `{{PEN_FILE}}`
-- **Screens to sync:** {{SCREENS}}
+Update the frontend code to match design changes from the .pen file.
 
 ## Target Code
 - **Code directory:** `{{CODE_DIR}}`
 - **File patterns:** {{CODE_GLOBS}}
 - **Framework:** {{FRAMEWORK}}
 - **Styling:** {{STYLING}}
-
+{{DESIGN_CHANGES}}
+{{STYLE_FILES}}
 ## Instructions
 
-1. Use the Pencil MCP tools to read the .pen file:
-   - Use `mcp__pencil__batch_get` to read screen structure, components, and layout
-   - Use `mcp__pencil__get_variables` to read design tokens (colors, spacing, typography)
-   - Use `mcp__pencil__get_screenshot` to visually verify what you're reading
+For EACH change listed above, update the code to match:
 
-2. Read the existing code files in `{{CODE_DIR}}` matching patterns: {{CODE_GLOBS}}
+### Color changes (`fill` property)
+Colors in this project use CSS custom properties with Tailwind:
+- `globals.css` defines: `--color-token-name: R G B;` (space-separated RGB channels)
+- `tailwind.config.js` maps: `'token-name': 'rgb(var(--color-token-name) / ...)'`
+- Components use: `bg-token-name`, `text-token-name`, etc.
 
-3. Compare the design with existing code and update ONLY visual properties:
-   - Layout structure (flex direction, grid, gaps, padding, margins)
-   - Colors, backgrounds, borders
-   - Typography (font sizes, weights, families, line heights)
-   - Spacing and sizing
-   - Border radius, shadows, opacity
-   - Component hierarchy and nesting
+When a `fill` changes:
+1. Convert the NEW hex to space-separated RGB: `#401417` → `64 20 23`
+2. Find the CSS variable in `globals.css` that the element's Tailwind class maps to
+3. Update the variable value in ALL theme blocks (`:root`, `[data-theme="monokai"]`, etc.)
+4. Do NOT rename classes — only change the CSS variable VALUES
 
-4. **PRESERVE** all functional code:
-   - Event handlers (onClick, onChange, onSubmit, etc.)
-   - State management (useState, useContext, stores)
-   - API calls and data fetching
-   - Business logic and conditionals
-   - Imports of non-styling modules
-   - Comments explaining business logic
+### Text changes (`content` property)
+Find the matching text in the component and update it.
 
-5. For {{STYLING}} styling:
-   - **tailwind**: Update Tailwind classes on elements
-   - **css-modules**: Update .module.css files
-   - **css**: Update CSS files
-   - **styled-components**: Update styled component definitions
+### Typography changes (`fontSize`, `fontWeight`, `fontFamily`)
+Update the corresponding Tailwind classes (e.g. `text-sm` → `text-base`, `font-bold` → `font-semibold`).
 
-6. If a component exists in the design but not in code, create a new component file.
-   If a component exists in code but not in the design, leave it untouched.
-
-7. After making changes, briefly list what was updated.
+## Rules
+- ONLY change what's listed in the design changes above
+- PRESERVE all functional code (handlers, state, API calls, logic)
+- After making changes, list what you updated

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { log } from "./logger.js";
-import type { SyncState, MappingState, MappingConfig, SyncDirection } from "./types.js";
+import type { SyncState, MappingState, MappingConfig, SyncDirection, PenNodeSnapshot } from "./types.js";
 
 const EMPTY_STATE: SyncState = { version: 1, mappings: {} };
 
@@ -35,6 +35,7 @@ export class StateStore {
   async updateMappingState(
     mapping: MappingConfig,
     direction: SyncDirection,
+    penSnapshot?: PenNodeSnapshot,
   ): Promise<void> {
     const penHash = await hashFile(mapping.penFile);
     const codeHashes = await hashCodeDir(mapping.codeDir, mapping.codeGlobs);
@@ -45,6 +46,7 @@ export class StateStore {
       codeHashes,
       lastSyncTimestamp: Date.now(),
       lastSyncDirection: direction,
+      penSnapshot,
     };
 
     await this.save();

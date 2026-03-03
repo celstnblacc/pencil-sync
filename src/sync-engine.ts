@@ -140,7 +140,7 @@ export class SyncEngine {
 
       // Update state on success
       if (result.success) {
-        await this.stateStore.updateMappingState(mapping, result.direction);
+        await this.stateStore.updateMappingState(mapping, result.direction, result.penSnapshot);
         this.lockManager.setLastSyncDirection(mapping.id, result.direction);
       }
 
@@ -156,7 +156,8 @@ export class SyncEngine {
     conflict: ConflictInfo,
   ): Promise<SyncResult> {
     if (direction === "pen-to-code") {
-      return syncPenToCode(mapping, this.config.settings);
+      const previousState = this.stateStore.getMappingState(mapping.id);
+      return syncPenToCode(mapping, this.config.settings, previousState);
     } else {
       return syncCodeToPen(mapping, this.config.settings, conflict.changedCodeFiles);
     }

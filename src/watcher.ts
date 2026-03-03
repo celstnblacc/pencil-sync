@@ -31,9 +31,36 @@ export class Watcher {
 
     for (const mapping of mappings) {
       this.watchMapping(mapping);
+      this.printMappingInfo(mapping);
     }
 
     log.info(`Watching ${mappings.length} mapping(s). Press Ctrl+C to stop.`);
+  }
+
+  private printMappingInfo(mapping: MappingConfig): void {
+    const cssFile = (mapping.styleFiles ?? []).find((f) => f.endsWith(".css"));
+    const hasFastPath = !!cssFile;
+
+    log.info("");
+    log.info(`── Mapping: ${mapping.id} ──`);
+    log.info(`  .pen file:  ${mapping.penFile}`);
+    log.info(`  Code dir:   ${mapping.codeDir}`);
+    log.info(`  Direction:  ${mapping.direction}`);
+    log.info(`  Framework:  ${mapping.framework ?? "auto-detect"}`);
+    log.info(`  Styling:    ${mapping.styling ?? "auto-detect"}`);
+
+    if (hasFastPath) {
+      log.info(`  Color sync: direct replacement in ${cssFile} (instant, all theme blocks)`);
+      log.info(`  Other sync: text, typography → Claude CLI`);
+    } else {
+      log.info(`  Color sync: via Claude CLI (add .css to "styleFiles" for direct replacement)`);
+      log.info(`  Other sync: text, typography → Claude CLI`);
+    }
+
+    if (mapping.styleFiles && mapping.styleFiles.length > 0) {
+      log.info(`  Style files: ${mapping.styleFiles.join(", ")}`);
+    }
+    log.info("");
   }
 
   private watchMapping(mapping: MappingConfig): void {
