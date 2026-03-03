@@ -121,7 +121,6 @@ describe("loadConfig", () => {
     expect(config.version).toBe(1);
     expect(config.mappings).toHaveLength(1);
     expect(config.mappings[0].id).toBe("main");
-    // Paths should be resolved to absolute
     expect(config.mappings[0].penFile).toContain(dir);
   });
 
@@ -172,5 +171,52 @@ describe("loadConfig", () => {
 
   it("throws when config file not found", async () => {
     await expect(loadConfig(join(dir, "nope.json"))).rejects.toThrow();
+  });
+
+  it("blocks __proto__ keys in settings (prototype pollution)", async () => {
+    const configPath = join(dir, "pencil-sync.config.json");
+    const malicious = {
+      mappings: [{
+        id: "test",
+        penFile: "d.pen",
+        codeDir: "code",
+        codeGlobs: ["**/*.tsx"],
+        direction: "both",
+      }],
+      settings: {
+        model: "claude-haiku-4-5-20251001",
+        "__proto__": { polluted: true },
+        "constructor": { polluted: true },
+        "prototype": { polluted: true },
+      },
+    };
+    await writeFile(configPath, JSON.stringify(malicious));
+
+    const config = await loadConfig(configPath);
+    // Settings should have the safe model value
+    expect(config.settings.model).toBe("claude-haiku-4-5-20251001");
+    // Prototype chain should not be polluted
+    const plain = {} as Record<string, unknown>;
+    expect(plain["polluted"]).toBeUndefined();
+    // Dangerous keys should not exist as own properties on the result
+    expect(Object.getOwnPropertyDescriptor(config.settings, "__proto__")).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(config.settings, "prototype")).toBeUndefined();
+  });
+
+  it("merges settings with no overrides", async () => {
+    const configPath = join(dir, "pencil-sync.config.json");
+    await writeFile(configPath, JSON.stringify({
+      mappings: [{
+        id: "test",
+        penFile: "d.pen",
+        codeDir: "code",
+        codeGlobs: ["**/*.tsx"],
+        direction: "both",
+      }],
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.settings.model).toBe("claude-sonnet-4-6");
+    expect(config.settings.debounceMs).toBe(2000);
   });
 });

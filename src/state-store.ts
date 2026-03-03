@@ -144,10 +144,12 @@ export function diffHashes(
 
 export function globToRegex(glob: string): RegExp {
   let regex = glob
-    .replace(/\?/g, "[^/]")          // ? matches single non-slash char (before ** handling)
+    .replace(/\?/g, "[^/]")
     .replace(/\./g, "\\.")
-    .replace(/\*\*\//g, "(.+/)?")    // **/ matches zero or more directories
-    .replace(/\*\*/g, ".*")          // ** at end matches anything
-    .replace(/\*/g, "[^/]*");        // * matches non-slash chars
+    .replace(/\*\*\//g, "\0DIRGLOB\0")   // park **/ before * handling
+    .replace(/\*\*/g, "\0ANYGLOB\0")     // park ** before * handling
+    .replace(/\*/g, "[^/]*")             // single * matches non-slash chars
+    .replace(/\0DIRGLOB\0/g, "(.+/)?")   // **/ matches zero or more directories
+    .replace(/\0ANYGLOB\0/g, ".*");       // ** matches anything
   return new RegExp(`^${regex}$`);
 }

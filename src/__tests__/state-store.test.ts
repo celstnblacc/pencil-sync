@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { StateStore, hashFile, hashCodeDir, diffHashes } from "../state-store.js";
+import { StateStore, hashFile, hashCodeDir, diffHashes, globToRegex } from "../state-store.js";
 
 describe("hashFile", () => {
   let dir: string;
@@ -120,6 +120,63 @@ describe("diffHashes", () => {
     expect(changed).toContain("deleted.tsx");
     expect(changed).toContain("added.tsx");
     expect(changed).not.toContain("kept.tsx");
+  });
+});
+
+describe("globToRegex", () => {
+  it("matches **/*.tsx (any depth)", () => {
+    const re = globToRegex("**/*.tsx");
+    expect(re.test("app.tsx")).toBe(true);
+    expect(re.test("components/Button.tsx")).toBe(true);
+    expect(re.test("src/ui/Card.tsx")).toBe(true);
+    expect(re.test("app.ts")).toBe(false);
+    expect(re.test("app.tsx.bak")).toBe(false);
+  });
+
+  it("matches *.css (root level only)", () => {
+    const re = globToRegex("*.css");
+    expect(re.test("style.css")).toBe(true);
+    expect(re.test("sub/style.css")).toBe(false);
+  });
+
+  it("matches **/*.{tsx,ts} via separate globs", () => {
+    const reTsx = globToRegex("**/*.tsx");
+    const reTs = globToRegex("**/*.ts");
+    expect(reTsx.test("app.tsx")).toBe(true);
+    expect(reTs.test("app.ts")).toBe(true);
+    expect(reTsx.test("app.ts")).toBe(false);
+  });
+
+  it("escapes dots in extension", () => {
+    const re = globToRegex("**/*.config.js");
+    expect(re.test("tailwind.config.js")).toBe(true);
+    expect(re.test("tailwindxconfigxjs")).toBe(false);
+  });
+
+  it("matches ? as single non-slash character", () => {
+    const re = globToRegex("?.txt");
+    expect(re.test("a.txt")).toBe(true);
+    expect(re.test("ab.txt")).toBe(false);
+    expect(re.test("/.txt")).toBe(false);
+  });
+
+  it("matches ** at end as anything", () => {
+    const re = globToRegex("src/**");
+    expect(re.test("src/foo")).toBe(true);
+    expect(re.test("src/foo/bar/baz.ts")).toBe(true);
+  });
+
+  it("matches nested directory glob", () => {
+    const re = globToRegex("src/**/components/*.tsx");
+    expect(re.test("src/components/Button.tsx")).toBe(true);
+    expect(re.test("src/ui/components/Button.tsx")).toBe(true);
+    expect(re.test("src/Button.tsx")).toBe(false);
+  });
+
+  it("does not match across slashes with single *", () => {
+    const re = globToRegex("src/*.tsx");
+    expect(re.test("src/App.tsx")).toBe(true);
+    expect(re.test("src/deep/App.tsx")).toBe(false);
   });
 });
 

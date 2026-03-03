@@ -89,6 +89,35 @@ describe("LockManager", () => {
     });
   });
 
+  describe("stale lock detection", () => {
+    it("auto-releases lock held longer than 6 minutes", () => {
+      lm.acquire("m1");
+      expect(lm.isLocked("m1")).toBe(true);
+
+      // Advance past STALE_LOCK_MS (360_000ms = 6 min)
+      vi.advanceTimersByTime(360_001);
+
+      // isLocked should detect staleness and force-release
+      expect(lm.isLocked("m1")).toBe(false);
+      // Should now be acquirable again
+      expect(lm.acquire("m1")).toBe(true);
+    });
+
+    it("does NOT auto-release lock within 6 minutes", () => {
+      lm.acquire("m1");
+      vi.advanceTimersByTime(359_999);
+      expect(lm.isLocked("m1")).toBe(true);
+    });
+
+    it("stale lock allows new acquire", () => {
+      lm.acquire("m1");
+      vi.advanceTimersByTime(360_001);
+
+      // acquire calls isLocked, which detects staleness
+      expect(lm.acquire("m1")).toBe(true);
+    });
+  });
+
   describe("shouldSuppressTrigger", () => {
     it("suppresses code-changed after pen-to-code sync", () => {
       lm.setLastSyncDirection("m1", "pen-to-code");
