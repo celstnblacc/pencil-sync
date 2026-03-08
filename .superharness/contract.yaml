@@ -1,16 +1,69 @@
 # Active contract for pencil-sync
-id: initial-setup
+id: mcp-enable-v1
 created: 2026-03-08
 created_by: maxime
 status: active
 
-goal: "Enable MCP tools end-to-end in pencil-sync"
+stack: "Node.js/npm"
+goal: "Enable MCP tools end-to-end with verified npm-based smoke tests"
 
 tasks:
-  - id: mcp-bootstrap
-    title: "Wire MCP config and verify tool calls"
-    status: in_progress
+  - id: mcp-config
+    title: "Wire MCP configuration for local development"
+    status: done
+    owner: codex-cli
+    project_path: "$HOME/Documents/DevOpsCelstn/pencil-sync"
+    review_lenses: [architecture, devops]
 
-decisions: []
+  - id: mcp-smoke-test
+    title: "Run npm smoke tests and capture evidence"
+    status: done
+    owner: claude-code
+    project_path: "$HOME/Documents/DevOpsCelstn/pencil-sync"
+    review_lenses: [tests, error-handling]
+    checks:
+      - "npm install"
+      - "npm run lint --if-present"
+      - "npm test --if-present"
+      - "npm run build --if-present"
+
+  - id: mcp-docs
+    title: "Document MCP usage flow in project docs"
+    status: todo
+    owner: codex-cli
+    project_path: "$HOME/Documents/DevOpsCelstn/pencil-sync"
+    review_lenses: [api-contract]
+
+  - id: claude-dispatch-smoke
+    title: "Dispatcher smoke test routed to Claude Code CLI"
+    status: todo
+    owner: claude-code
+    project_path: "$HOME/Documents/DevOpsCelstn/pencil-sync"
+    review_lenses: [tests]
+
+  - id: contract-queue-cleanup
+    title: "Clean old inbox rows and keep only active dispatch items"
+    status: done
+    owner: claude-code
+    project_path: "$HOME/Documents/DevOpsCelstn/pencil-sync"
+    review_lenses: [tests]
+    completed_at: "2026-03-08T19:50:00Z"
+
+decisions:
+  - date: 2026-03-08
+    by: maxime
+    decision: "Start with soft automation (contract/ledger/handoff lifecycle) before hard hooks"
+    rationale: "Lower risk and faster iteration while workflow stabilizes"
+  - date: 2026-03-08
+    by: maxime
+    decision: "Use npm-first smoke checks for this contract cycle"
+    rationale: "Project currently operates as Node.js/npm"
+  - date: 2026-03-08
+    by: claude-code
+    decision: "Add 'delegate <TASK_ID>' and 'contract delegate <TASK_ID>' trigger phrases to CLAUDE.md"
+    rationale: "Allow direct delegation without going through 'contract today' prompt flow"
+
+notes:
+  - "Installed CLI observed: pencil-sync --version = 0.1.0"
 
 failures: []
