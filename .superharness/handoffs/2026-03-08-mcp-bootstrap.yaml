@@ -1,0 +1,6 @@
+task_id: mcp-bootstrap
+status: in_progress
+summary: "Initialized superharness and activated contract."
+next_steps:
+  - "Wire MCP config"
+  - "Run tool-call smoke test"
