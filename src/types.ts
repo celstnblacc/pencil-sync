@@ -24,6 +24,7 @@ export interface Settings {
   conflictStrategy: ConflictStrategy;
   stateFile: string;
   logLevel: LogLevel;
+  mcpConfigPath?: string;
 }
 
 export interface PencilSyncConfig {
@@ -101,4 +102,5 @@ export const DEFAULT_SETTINGS: Settings = {
   conflictStrategy: "prompt",
   stateFile: ".pencil-sync-state.json",
   logLevel: "info",
+  mcpConfigPath: undefined,
 };

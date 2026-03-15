@@ -2,7 +2,7 @@
   "name": "pencil-sync",
   "version": "0.1.0",
   "description": "Bidirectional sync between .pen design files and frontend code via Claude CLI",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "pencil-sync contributors",
   "repository": {
     "type": "git",

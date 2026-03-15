@@ -1,0 +1,96 @@
+# Inbox archive
+
+# normalized_at: 2026-03-08T19:11:32Z
+# Delegation inbox
+# status: pending|prepared|launched|done|failed|stale
+
+- id: 20260308T181441Z-mcp-smoke-test
+  to: claude-code
+  task: mcp-smoke-test
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: prepared
+  created_at: 2026-03-08T18:14:41Z
+
+- id: 20260308T182211Z-mcp-smoke-test
+  to: claude-code
+  task: mcp-smoke-test
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: prepared
+  created_at: 2026-03-08T18:22:11Z
+
+- id: 20260308T183029Z-mcp-docs
+  to: codex-cli
+  task: mcp-docs
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: stale
+  created_at: 2026-03-08T18:30:29Z
+
+- id: 20260308T183559Z-claude-dispatch-smoke
+  to: claude-code
+  task: claude-dispatch-smoke
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: stale
+  created_at: 2026-03-08T18:35:59Z
+
+- id: 20260308T183839Z-claude-dispatch-smoke
+  to: claude-code
+  task: claude-dispatch-smoke
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: prepared
+  created_at: 2026-03-08T18:38:39Z
+
+- id: 20260308T184438Z-mcp-docs-49354-485615
+  to: codex-cli
+  task: mcp-docs
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: stale
+  priority: 3
+  retry_count: 0
+  max_retries: 3
+  created_at: 2026-03-08T18:44:38Z
+
+- id: 20260308T184444Z-mcp-docs-49409-136553
+  to: codex-cli
+  task: mcp-docs
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: stale
+  launched_at: 2026-03-08T18:45:08Z
+  priority: 1
+  retry_count: 1
+  max_retries: 3
+  created_at: 2026-03-08T18:44:44Z
+
+- id: retry-limit-test-claude
+  to: codex-cli
+  task: mcp-docs
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: failed
+  failed_at: 2026-03-08T18:45:28Z
+  priority: 1
+  retry_count: 0
+  max_retries: 0
+  created_at: 2026-03-08T18:45:00Z
+
+- id: 20260308T190657Z-mcp-docs-54337-359387
+  to: codex-cli
+  task: mcp-docs
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: stale
+  launched_at: 2026-03-08T19:06:57Z
+  priority: 1
+  retry_count: 1
+  max_retries: 3
+  created_at: 2026-03-08T19:06:57Z
+
+- id: 20260308T191735Z-mcp-docs-56237-501975
+  to: codex-cli
+  task: mcp-docs
+  project: $HOME/Documents/DevOpsCelstn/pencil-sync
+  status: stale
+  launched_at: 2026-03-08T19:17:35Z
+  priority: 1
+  retry_count: 1
+  max_retries: 3
+  created_at: 2026-03-08T19:17:35Z
+
+# archived_at: 2026-03-08T19:50:00Z — claude-code — contract-queue-cleanup: cleared stale inbox entries

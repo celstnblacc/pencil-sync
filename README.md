@@ -2,7 +2,7 @@
 
 ![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-green)
 ![Tests: 154 passing](https://img.shields.io/badge/tests-154%20passing-brightgreen)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)
 
 Bidirectional sync between [Pencil.dev](https://pencil.dev) designs and frontend code, powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
@@ -250,6 +250,99 @@ When both the `.pen` file and code files have changed since the last sync:
 - **pen-wins** — Design takes priority, overwrites code
 - **code-wins** — Code takes priority, overwrites design
 - **auto-merge** — Claude attempts to merge both sides
+
+## MCP Integration
+
+By default, pencil-sync reads `.pen` files directly from disk and delegates code edits to the Claude CLI using standard file tools (`Edit`, `Write`, `Read`, `Glob`, `Grep`). Enabling the **Pencil MCP server** gives the Claude subprocess direct, structured access to the `.pen` file — enabling richer code-to-design sync (reading node IDs, updating design properties, taking screenshots) without raw file parsing.
+
+### How it works
+
+```
+Without MCP (default)
+  Claude subprocess
+    └── file tools only (Edit, Write, Read, Glob, Grep)
+    └── reads .pen file as raw JSON snapshot
+
+With MCP enabled
+  Claude subprocess
+    └── file tools + Pencil MCP tools
+          mcp__pencil__batch_get       — read nodes by ID or pattern
+          mcp__pencil__batch_design    — insert / update / delete nodes
+          mcp__pencil__set_variables   — update design variables / themes
+          mcp__pencil__get_screenshot  — visual validation
+    └── .pen contents accessed via encrypted MCP protocol (not raw file read)
+```
+
+### Setup
+
+1. Install and configure the [Pencil MCP server](https://pencil.dev/docs/mcp).
+
+2. Create an MCP config file (e.g. `mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "pencil": {
+      "command": "npx",
+      "args": ["-y", "@pencil/mcp-server"]
+    }
+  }
+}
+```
+
+3. Add `mcpConfigPath` to your `pencil-sync.config.json`:
+
+```jsonc
+{
+  "settings": {
+    "model": "claude-sonnet-4-6",
+    "maxBudgetUsd": 0.5,
+    "mcpConfigPath": "./mcp.json"
+  }
+}
+```
+
+### MCP usage flow (end-to-end)
+
+1. Run a one-time code-to-design sync with MCP enabled:
+
+```bash
+pencil-sync sync -d code-to-pen -c ./pencil-sync.config.json
+```
+
+2. Verify MCP tool usage in logs (look for `mcp__pencil__` tool calls instead of raw `.pen` JSON writes):
+
+```bash
+DEBUG=pencil-sync:* pencil-sync sync -d code-to-pen -c ./pencil-sync.config.json
+```
+
+3. Run watcher mode for ongoing sync:
+
+```bash
+pencil-sync watch -c ./pencil-sync.config.json
+```
+
+4. Validate state after a few edits:
+
+```bash
+pencil-sync status -c ./pencil-sync.config.json
+```
+
+### Effect on sync direction
+
+| Direction | Without MCP | With MCP |
+|-----------|-------------|----------|
+| pen-to-code | Reads `.pen` snapshot → color fast path or Claude file edits | Same (snapshot read is local) |
+| code-to-pen | Claude edits `.pen` as raw JSON | Claude uses `batch_design` / `set_variables` to write structured updates |
+| conflict auto-merge | Claude reasons over both sides via file tools | Claude can visually verify via `get_screenshot` |
+
+MCP is most impactful for **code-to-pen** and **auto-merge** — the directions that need to write back to the design file.
+
+### Security note
+
+`.pen` files are encrypted. The Pencil MCP server is the only supported way to read or write their contents. If `mcpConfigPath` is not set, pencil-sync falls back to treating the `.pen` file as a JSON snapshot (works for design-to-code; code-to-pen writes may be unreliable).
+
+---
 
 ## Development
 

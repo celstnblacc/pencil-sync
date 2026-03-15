@@ -236,4 +236,46 @@ describe("runClaude", () => {
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
   });
+
+  it("uses default allowedTools when none specified", async () => {
+    const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
+    listeners.get("close")!(0);
+    await promise;
+
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe("Edit,Write,Read,Glob,Grep");
+  });
+
+  it("uses custom allowedTools when specified", async () => {
+    const customTools = "Edit,Write,Read,Glob,Grep,mcp__pencil__batch_get,mcp__pencil__batch_design";
+    const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6", allowedTools: customTools });
+    listeners.get("close")!(0);
+    await promise;
+
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe(customTools);
+  });
+
+  it("adds --mcp-config flag when mcpConfigPath is provided", async () => {
+    const promise = runClaude({
+      prompt: "test",
+      model: "claude-sonnet-4-6",
+      mcpConfigPath: "/path/to/mcp.json",
+    });
+    listeners.get("close")!(0);
+    await promise;
+
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain("--mcp-config");
+    expect(args[args.indexOf("--mcp-config") + 1]).toBe("/path/to/mcp.json");
+  });
+
+  it("does not add --mcp-config flag when mcpConfigPath is not provided", async () => {
+    const promise = runClaude({ prompt: "test", model: "claude-sonnet-4-6" });
+    listeners.get("close")!(0);
+    await promise;
+
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain("--mcp-config");
+  });
 });
