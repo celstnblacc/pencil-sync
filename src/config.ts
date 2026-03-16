@@ -24,6 +24,28 @@ function safeMerge<T>(base: T, overrides?: Partial<T>): T {
   return result;
 }
 
+/**
+ * Validates that a resolved path is within the allowed directory.
+ * Prevents path traversal attacks (e.g., ../../../../etc/passwd).
+ * @throws Error if path escapes allowedDir
+ */
+function validatePathWithinDirectory(
+  resolvedPath: string,
+  allowedDir: string,
+  fieldName: string,
+): void {
+  // Normalize both paths to handle symlinks and relative segments
+  const normalizedResolved = resolve(resolvedPath);
+  const normalizedAllowed = resolve(allowedDir);
+
+  // Check if the resolved path starts with the allowed directory
+  if (!normalizedResolved.startsWith(normalizedAllowed + "/") && normalizedResolved !== normalizedAllowed) {
+    throw new Error(
+      `Path traversal detected: ${fieldName} "${resolvedPath}" is outside config directory "${allowedDir}"`,
+    );
+  }
+}
+
 const CONFIG_FILENAMES = [
   "pencil-sync.config.json",
   ".pencil-sync.json",
@@ -134,6 +156,10 @@ async function resolveMapping(
   resolved.penFile = resolve(configDir, mapping.penFile);
   resolved.codeDir = resolve(configDir, mapping.codeDir);
 
+  // Validate paths to prevent traversal attacks
+  validatePathWithinDirectory(resolved.penFile, configDir, `mapping[${mapping.id}].penFile`);
+  validatePathWithinDirectory(resolved.codeDir, configDir, `mapping[${mapping.id}].codeDir`);
+
   const projectRoot = await findProjectRoot(resolved.codeDir, configDir);
 
   if (!resolved.framework) {
@@ -176,9 +202,17 @@ export async function loadConfig(
 
   const raw = await readFile(resolvedPath, "utf-8");
   // Strip JSONC comments while preserving string contents
+  // Strategy: match strings first, preserve them; then match comments and remove them
   const cleaned = raw.replace(
-    /"(?:[^"\\]|\\.)*"|\/\/.*$|\/\*[\s\S]*?\*\//gm,
-    (match) => (match.startsWith("/") ? "" : match),
+    /"(?:[^"\\]|\\.)*"|\/\/.*?(?=\n|$)|\/\*[\s\S]*?\*\//gm,
+    (match) => {
+      // If match starts with a quote, it's a string — preserve it
+      if (match.startsWith('"')) {
+        return match;
+      }
+      // Otherwise it's a comment — remove it
+      return "";
+    },
   );
   const parsed = JSON.parse(cleaned) as Partial<PencilSyncConfig>;
 
@@ -191,6 +225,9 @@ export async function loadConfig(
 
   // Resolve state file path relative to config
   settings.stateFile = resolve(configDir, settings.stateFile);
+
+  // Validate stateFile to prevent path traversal
+  validatePathWithinDirectory(settings.stateFile, configDir, "settings.stateFile");
 
   const mappings = await Promise.all(
     parsed.mappings.map((m) => resolveMapping(m as MappingConfig, configDir)),

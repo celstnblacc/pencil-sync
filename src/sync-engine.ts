@@ -36,6 +36,10 @@ export class SyncEngine {
 
   async initialize(): Promise<void> {
     await this.stateStore.load();
+
+    // Clean up stale locks from previous crashes
+    this.lockManager.cleanupStaleLocks();
+
     for (const mapping of this.config.mappings) {
       await this.stateStore.initMappingState(mapping);
     }
@@ -79,6 +83,7 @@ export class SyncEngine {
     mapping: MappingConfig,
     triggerDirection: "pen-changed" | "code-changed" | "manual",
     manualDirection?: "pen-to-code" | "code-to-pen",
+    dryRun = false,
   ): Promise<SyncResult> {
     if (!this.lockManager.acquire(mapping.id)) {
       return {
@@ -110,37 +115,38 @@ export class SyncEngine {
       let result: SyncResult;
 
       if (manualDirection) {
-        result = await this.executeSyncDirection(mapping, manualDirection, conflict, previousState);
+        result = await this.executeSyncDirection(mapping, manualDirection, conflict, previousState, dryRun);
       } else if (triggerDirection === "pen-changed") {
         if (mapping.direction === "code-to-pen") {
           log.debug(`Ignoring .pen change for code-to-pen mapping ${mapping.id}`);
           return { success: true, direction: "code-to-pen", mappingId: mapping.id, filesChanged: [] };
         }
-        result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
+        result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState, dryRun);
       } else if (triggerDirection === "code-changed") {
         if (mapping.direction === "pen-to-code") {
           log.debug(`Ignoring code change for pen-to-code mapping ${mapping.id}`);
           return { success: true, direction: "pen-to-code", mappingId: mapping.id, filesChanged: [] };
         }
-        result = await this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState);
+        result = await this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState, dryRun);
       } else {
         if (conflict.penChanged && !conflict.codeChanged) {
-          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
+          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState, dryRun);
         } else if (conflict.codeChanged && !conflict.penChanged) {
-          result = await this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState);
+          result = await this.executeSyncDirection(mapping, "code-to-pen", conflict, previousState, dryRun);
         } else {
           // Default to pen-to-code: design is the source of truth when both sides changed or neither changed
-          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState);
+          result = await this.executeSyncDirection(mapping, "pen-to-code", conflict, previousState, dryRun);
         }
       }
 
       this.trackSpend(result.tokenUsage);
 
-      if (result.success && !result.skipped) {
+      const shouldPersist = result.success && !result.skipped && !result.dryRun;
+      if (shouldPersist) {
         await this.stateStore.updateMappingState(mapping, result.direction, result.penSnapshot);
         this.lockManager.setLastSyncDirection(mapping.id, result.direction);
       }
-      releaseWithGrace = result.success && !result.skipped;
+      releaseWithGrace = shouldPersist;
 
       return result;
     } finally {
@@ -157,25 +163,28 @@ export class SyncEngine {
     direction: "pen-to-code" | "code-to-pen",
     conflict: ConflictInfo,
     previousState: MappingState | undefined,
+    dryRun = false,
   ): Promise<SyncResult> {
-    const preflightError = direction === "code-to-pen"
-      ? await this.preflightBudgetCheck(mapping, conflict)
-      : await this.preflightPenToCodeBudgetCheck(mapping, previousState);
-    if (preflightError) {
-      log.warn(`Budget limit reached for ${mapping.id}: ${preflightError}`);
-      return {
-        success: false,
-        direction,
-        mappingId: mapping.id,
-        filesChanged: [],
-        error: preflightError,
-      };
+    if (!dryRun) {
+      const preflightError = direction === "code-to-pen"
+        ? await this.preflightBudgetCheck(mapping, conflict)
+        : await this.preflightPenToCodeBudgetCheck(mapping, previousState);
+      if (preflightError) {
+        log.warn(`Budget limit reached for ${mapping.id}: ${preflightError}`);
+        return {
+          success: false,
+          direction,
+          mappingId: mapping.id,
+          filesChanged: [],
+          error: preflightError,
+        };
+      }
     }
 
     if (direction === "pen-to-code") {
-      return syncPenToCode(mapping, this.config.settings, previousState);
+      return syncPenToCode(mapping, this.config.settings, previousState, dryRun);
     } else {
-      return syncCodeToPen(mapping, this.config.settings, conflict.changedCodeFiles, this.penReader);
+      return syncCodeToPen(mapping, this.config.settings, conflict.changedCodeFiles, this.penReader, dryRun);
     }
   }
 

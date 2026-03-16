@@ -54,6 +54,7 @@ export interface SyncState {
 export interface SyncResult {
   success: boolean;
   skipped?: boolean;
+  dryRun?: boolean;
   direction: SyncDirection;
   mappingId: string;
   filesChanged: string[];
@@ -67,12 +68,19 @@ export interface TokenUsage {
   output: number;
 }
 
+export type McpErrorType =
+  | "malformed_response"
+  | "server_unavailable"
+  | "tool_timeout"
+  | "server_crash";
+
 export interface ClaudeRunResult {
   success: boolean;
   stdout: string;
   stderr: string;
   exitCode: number;
   tokenUsage?: TokenUsage;
+  mcpError?: McpErrorType;
 }
 
 export interface ConflictInfo {

@@ -2,13 +2,15 @@ import { watch, type FSWatcher } from "chokidar";
 import { join } from "node:path";
 import { log } from "./logger.js";
 import { SyncEngine } from "./sync-engine.js";
-import { getCssStyleFile } from "./utils.js";
+import { getCssStyleFile, extractErrorMessage } from "./utils.js";
 import type { MappingConfig, PencilSyncConfig } from "./types.js";
 
 export class Watcher {
   private watchers: FSWatcher[] = [];
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private engine: SyncEngine;
+  private pendingChanges = new Map<string, NodeJS.Timeout>();
+  private inFlightSyncs = new Set<string>();
 
   constructor(
     private config: PencilSyncConfig,
@@ -85,6 +87,9 @@ export class Watcher {
       penWatcher.on("unlink", () => {
         this.debouncedSync(mapping, "pen-changed", debounceMs);
       });
+      penWatcher.on("error", (error) => {
+        log.error(`Watcher error for ${mapping.penFile}: ${error instanceof Error ? error.message : String(error)}`);
+      });
 
       this.watchers.push(penWatcher);
       log.info(`Watching .pen file: ${mapping.penFile}`);
@@ -119,6 +124,9 @@ export class Watcher {
         log.debug(`Code file deleted: ${path}`);
         this.debouncedSync(mapping, "code-changed", debounceMs);
       });
+      codeWatcher.on("error", (error) => {
+        log.error(`Watcher error for ${watchPaths.join(", ")}: ${error instanceof Error ? error.message : String(error)}`);
+      });
 
       this.watchers.push(codeWatcher);
       log.info(`Watching code: ${watchPaths.join(", ")}`);
@@ -142,7 +150,23 @@ export class Watcher {
         return;
       }
 
+      // If a sync is already in-flight for this mapping, queue this change
+      if (this.inFlightSyncs.has(mapping.id)) {
+        const existingPending = this.pendingChanges.get(key);
+        if (existingPending) clearTimeout(existingPending);
+
+        const pendingTimer = setTimeout(() => {
+          this.pendingChanges.delete(key);
+          this.debouncedSync(mapping, trigger, debounceMs);
+        }, debounceMs);
+
+        this.pendingChanges.set(key, pendingTimer);
+        return;
+      }
+
       log.info(`Change detected (${trigger}) for mapping "${mapping.id}"`);
+
+      this.inFlightSyncs.add(mapping.id);
 
       try {
         const result = await this.engine.syncMapping(mapping, trigger);
@@ -158,7 +182,9 @@ export class Watcher {
           log.error(`Sync failed: ${result.error ?? "unknown error"}`);
         }
       } catch (err) {
-        log.error(`Sync error: ${err instanceof Error ? err.message : String(err)}`);
+        log.error(`Sync error: ${extractErrorMessage(err)}`);
+      } finally {
+        this.inFlightSyncs.delete(mapping.id);
       }
     }, debounceMs);
 
@@ -171,8 +197,14 @@ export class Watcher {
     }
     this.debounceTimers.clear();
 
+    for (const [, timer] of this.pendingChanges) {
+      clearTimeout(timer);
+    }
+    this.pendingChanges.clear();
+
     await Promise.all(this.watchers.map((w) => w.close()));
     this.watchers = [];
+    this.inFlightSyncs.clear();
     this.engine.shutdown();
     log.info("Watcher stopped");
   }

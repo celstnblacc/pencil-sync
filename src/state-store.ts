@@ -1,32 +1,76 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, unlink, copyFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { readdir, rename } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { log } from "./logger.js";
+import { extractErrorMessage } from "./utils.js";
 import type { SyncState, MappingState, MappingConfig, SyncDirection, PenNodeSnapshot } from "./types.js";
 
-const EMPTY_STATE: SyncState = { version: 1, mappings: {} };
+function createEmptyState(): SyncState {
+  return { version: 1, mappings: {} };
+}
+
+interface PersistedState extends SyncState {
+  _checksum?: string;
+}
 
 export class StateStore {
-  private state: SyncState = { ...EMPTY_STATE };
+  private state: SyncState = createEmptyState();
 
   constructor(private stateFilePath: string) {}
 
   async load(): Promise<void> {
+    // Clean up orphaned .tmp file from previous crash
+    await this.cleanupOrphanedTmp();
+
     try {
       const raw = await readFile(this.stateFilePath, "utf-8");
-      this.state = JSON.parse(raw) as SyncState;
+      const parsed = JSON.parse(raw) as PersistedState;
+
+      // Validate structure
+      if (!this.isValidState(parsed)) {
+        log.warn("State file structure invalid, falling back to empty state");
+        this.state = createEmptyState();
+        return;
+      }
+
+      // Verify checksum if present
+      if (parsed._checksum) {
+        const { _checksum, ...dataOnly } = parsed;
+        const computed = this.computeChecksum(dataOnly);
+        if (computed !== _checksum) {
+          log.warn("State file checksum mismatch (possible corruption or tampering), falling back to empty state");
+          this.state = createEmptyState();
+          return;
+        }
+      }
+
+      // Strip checksum before storing in memory
+      const { _checksum, ...stateData } = parsed;
+      this.state = stateData;
       log.debug(`Loaded state with ${Object.keys(this.state.mappings).length} mappings`);
-    } catch {
-      this.state = { ...EMPTY_STATE };
-      log.debug("No existing state file, starting fresh");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        log.debug("No existing state file, starting fresh");
+      } else {
+        log.warn(`Failed to parse state file (${extractErrorMessage(err)}), falling back to empty state`);
+      }
+      this.state = createEmptyState();
     }
   }
 
   // Atomic write: write to .tmp then rename to avoid corrupted state if process is killed mid-write
   async save(): Promise<void> {
+    // Create backup before overwriting (if state file exists)
+    await this.createBackup();
+
     const tmp = this.stateFilePath + ".tmp";
-    await writeFile(tmp, JSON.stringify(this.state, null, 2));
+
+    // Add checksum to detect corruption/tampering
+    const checksum = this.computeChecksum(this.state);
+    const persistedState: PersistedState = { ...this.state, _checksum: checksum };
+
+    await writeFile(tmp, JSON.stringify(persistedState, null, 2));
     await rename(tmp, this.stateFilePath);
     log.debug("State saved");
   }
@@ -59,6 +103,55 @@ export class StateStore {
     if (this.state.mappings[mapping.id]) return;
     await this.updateMappingState(mapping, mapping.direction === "both" ? "pen-to-code" : mapping.direction);
   }
+
+  private isValidState(obj: unknown): obj is PersistedState {
+    if (typeof obj !== "object" || obj === null) return false;
+    const state = obj as Partial<PersistedState>;
+    if (typeof state.version !== "number") return false;
+    if (typeof state.mappings !== "object" || state.mappings === null) return false;
+    return true;
+  }
+
+  private computeChecksum(data: SyncState): string {
+    // Use deterministic JSON serialization (sorted keys at all levels)
+    const serialized = JSON.stringify(data, (key, value) => {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return Object.keys(value)
+          .sort()
+          .reduce((sorted: Record<string, unknown>, k) => {
+            sorted[k] = value[k];
+            return sorted;
+          }, {});
+      }
+      return value;
+    });
+    return createHash("sha256").update(serialized).digest("hex");
+  }
+
+  private async cleanupOrphanedTmp(): Promise<void> {
+    const tmpFile = this.stateFilePath + ".tmp";
+    try {
+      await unlink(tmpFile);
+      log.debug("Cleaned up orphaned .tmp file");
+    } catch {
+      // No orphaned tmp file — OK
+    }
+  }
+
+  private async createBackup(): Promise<void> {
+    try {
+      const backupPath = this.stateFilePath + ".backup";
+      await copyFile(this.stateFilePath, backupPath);
+      log.debug("Created state backup");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        log.debug("No existing state to backup");
+      } else {
+        log.warn(`Failed to create state backup: ${extractErrorMessage(err)}`);
+      }
+    }
+  }
+
 }
 
 export async function hashFile(filePath: string): Promise<string> {

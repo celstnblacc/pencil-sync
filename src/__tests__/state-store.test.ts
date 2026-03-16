@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, writeFile, rm, mkdir, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateStore, hashFile, hashCodeDir, diffHashes, globToRegex } from "../state-store.js";
@@ -259,5 +259,40 @@ describe("StateStore", () => {
     const second = store.getMappingState("m1");
 
     expect(second!.codeHashes).toEqual(first!.codeHashes);
+  });
+
+  it("creates a .backup file when saving over an existing state file", async () => {
+    const stateFile = join(dir, "state.json");
+    const backupFile = stateFile + ".backup";
+
+    const store = new StateStore(stateFile);
+    await store.load(); // starts fresh (no file)
+    await store.save(); // creates state file
+
+    // Save again — this time a state file exists, so backup should be created
+    await store.save();
+
+    const backupExists = await access(backupFile).then(() => true).catch(() => false);
+    expect(backupExists).toBe(true);
+  });
+
+  it("logs a warning when backup creation fails with a non-ENOENT error", async () => {
+    const { log } = await import("../logger.js");
+    const warnSpy = vi.spyOn(log, "warn");
+
+    const stateFile = join(dir, "state.json");
+    const backupPath = stateFile + ".backup";
+
+    // Write initial state and create a backup file that is a directory (causes copyFile to fail with non-ENOENT)
+    await writeFile(stateFile, JSON.stringify({ version: 1, mappings: {} }));
+    await mkdir(backupPath); // backup path is a directory — copyFile will fail with EISDIR
+
+    const store = new StateStore(stateFile);
+    await store.load();
+    await store.save(); // triggers createBackup which will fail with EISDIR
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to create state backup"));
+
+    warnSpy.mockRestore();
   });
 });

@@ -15,6 +15,7 @@ export async function syncCodeToPen(
   settings: Settings,
   changedFiles: string[],
   penReader: PenReader = defaultPenReader,
+  dryRun = false,
 ): Promise<SyncResult> {
   log.sync("code-to-pen", mapping.id, `Starting code → design sync (${changedFiles.length} files changed)`);
 
@@ -25,6 +26,18 @@ export async function syncCodeToPen(
       direction: "code-to-pen",
       mappingId: mapping.id,
       filesChanged: [],
+    };
+  }
+
+  if (dryRun) {
+    log.info(`[dry-run] Would sync ${changedFiles.length} code file(s) → .pen design`);
+    log.info(`[dry-run] Would change: ${mapping.penFile}`);
+    return {
+      success: true,
+      dryRun: true,
+      direction: "code-to-pen",
+      mappingId: mapping.id,
+      filesChanged: [mapping.penFile],
     };
   }
 
@@ -44,7 +57,10 @@ export async function syncCodeToPen(
   });
 
   if (!result.success) {
-    log.error(`Code-to-pen sync failed for ${mapping.id}: ${result.stderr.slice(0, 200)}`);
+    const errorPrefix = result.mcpError
+      ? `Code-to-pen sync failed (MCP error: ${result.mcpError}) for ${mapping.id}`
+      : `Code-to-pen sync failed for ${mapping.id}`;
+    log.error(`${errorPrefix}: ${result.stderr.slice(0, 200)}`);
     return {
       success: false,
       direction: "code-to-pen",

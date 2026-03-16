@@ -8,6 +8,8 @@ dist/
 .env.*
 *.pem
 *.key
+*.p12
+*.pfx
 
 # IDE
 .idea/
@@ -17,3 +19,20 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Superharness — entire directory is machine-specific operational tooling.
+# Contains absolute local paths (project_path) and dispatch state.
+# Must NOT be committed to a public repository.
+.superharness/
+shipguard.txt
+
+# codex-pii-guard:start
+.env
+.env.local
+.env.*.local
+*.log
+*.session
+*.transcript
+.git_new/
+!.env.example
+# codex-pii-guard:end

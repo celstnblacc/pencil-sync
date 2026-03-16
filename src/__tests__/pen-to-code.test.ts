@@ -373,9 +373,10 @@ describe("syncPenToCode", () => {
 
       const result = await syncPenToCode(mapping, settings, previousState);
 
-      // Partial success: fill changed, but Claude failed
-      expect(result.success).toBe(true); // fill succeeded
+      // Claude failed — must return success: false so error is visible to callers
+      expect(result.success).toBe(false);
       expect(result.error).toContain("Claude CLI failed");
+      // Fill changes still reported so callers know what changed on disk
       expect(result.filesChanged).toContain("app/globals.css");
 
       // CSS was still updated

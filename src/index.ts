@@ -10,6 +10,8 @@ import { loadConfig } from "./config.js";
 import { setLogLevel, log } from "./logger.js";
 import { SyncEngine } from "./sync-engine.js";
 import { Watcher } from "./watcher.js";
+import { shutdownManager } from "./shutdown.js";
+import { extractErrorMessage } from "./utils.js";
 import type { PencilSyncConfig, SyncDirection } from "./types.js";
 
 const program = new Command();
@@ -42,14 +44,12 @@ program
 
     const watcher = new Watcher(config, engine);
 
-    // Graceful shutdown
-    const shutdown = async () => {
-      log.info("\nShutting down...");
+    // Register cleanup handlers
+    shutdownManager.registerCleanup("watcher", async () => {
       await watcher.stop();
-      process.exit(0);
-    };
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
+    });
+
+    installShutdownHandlers();
 
     await watcher.start(opts.mapping);
 
@@ -62,10 +62,18 @@ program
   .description("Run a one-time sync")
   .option("-d, --direction <dir>", "Sync direction: pen-to-code | code-to-pen")
   .option("-m, --mapping <id>", "Sync specific mapping only")
+  .option("-n, --dry-run", "Preview what would change without writing any files")
   .action(async (opts) => {
     const config = await initConfig(program.opts());
     const engine = new SyncEngine(config);
     await engine.initialize();
+
+    // Register cleanup handlers
+    shutdownManager.registerCleanup("engine", () => {
+      engine.shutdown();
+    });
+
+    installShutdownHandlers();
 
     const mappings = opts.mapping
       ? config.mappings.filter((m) => m.id === opts.mapping)
@@ -82,30 +90,49 @@ program
       process.exit(1);
     }
 
+    const dryRun = !!opts.dryRun;
+    if (dryRun) log.info("[dry-run] No files will be written.");
+
+    let hasErrors = false;
+
     for (const mapping of mappings) {
-      const spinner = ora(`Syncing "${mapping.id}"...`).start();
+      const spinnerLabel = dryRun ? `Previewing "${mapping.id}"...` : `Syncing "${mapping.id}"...`;
+      const spinner = ora(spinnerLabel).start();
       try {
         const result = await engine.syncMapping(
           mapping,
           "manual",
           direction as "pen-to-code" | "code-to-pen" | undefined,
+          dryRun,
         );
 
         if (result.success) {
-          spinner.succeed(
-            `${mapping.id}: ${result.filesChanged.length} files synced`,
-          );
+          const count = result.filesChanged.length;
+          if (dryRun) {
+            spinner.info(
+              count > 0
+                ? `${mapping.id}: would change ${count} file(s): ${result.filesChanged.join(", ")}`
+                : `${mapping.id}: no changes detected`,
+            );
+          } else {
+            spinner.succeed(
+              `${mapping.id}: ${count} files synced`,
+            );
+          }
         } else {
           spinner.fail(`${mapping.id}: ${result.error}`);
+          hasErrors = true;
         }
       } catch (err) {
         spinner.fail(
-          `${mapping.id}: ${err instanceof Error ? err.message : String(err)}`,
+          `${mapping.id}: ${extractErrorMessage(err)}`,
         );
+        hasErrors = true;
       }
     }
 
     engine.shutdown();
+    process.exit(hasErrors ? 1 : 0);
   });
 
 program
@@ -156,6 +183,14 @@ program
     const config = await initConfig(program.opts());
     const engine = new SyncEngine(config);
     await engine.initialize();
+
+    // Register cleanup handlers
+    shutdownManager.registerCleanup("engine", () => {
+      engine.shutdown();
+    });
+
+    installShutdownHandlers();
+
     const store = engine.getStateStore();
 
     console.log(chalk.bold("\nPencil Sync Status\n"));
@@ -182,7 +217,14 @@ program
     }
 
     engine.shutdown();
+    process.exit(0);
   });
+
+function installShutdownHandlers(): void {
+  shutdownManager.installSignalHandlers();
+  shutdownManager.installUnhandledRejectionHandler();
+  shutdownManager.installUncaughtExceptionHandler();
+}
 
 async function initConfig(
   opts: { config?: string; verbose?: boolean },
@@ -195,7 +237,7 @@ async function initConfig(
     if (opts.verbose) setLogLevel("debug"); // verbose flag overrides config
     return config;
   } catch (err) {
-    log.error(err instanceof Error ? err.message : String(err));
+    log.error(extractErrorMessage(err));
     process.exit(1);
   }
 }

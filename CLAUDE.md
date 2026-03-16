@@ -2,6 +2,17 @@
 
 Bidirectional sync between Pencil.dev `.pen` design files and frontend code via the Claude CLI.
 
+## Identity
+
+## This Project
+- What: pencil-sync
+- Stack: Node/TypeScript/Docker
+- Status: active
+
+## Cross-Agent Protocol
+- Read `.superharness/contract.yaml` before starting work.
+- Keep task status, ledger, and handoff updated before stopping.
+
 ## Commands
 
 ```bash
@@ -63,7 +74,7 @@ When the user says `contract today`, do this sequence:
 
 ### Delegation Execution (Claude -> Codex)
 When delegating to Codex, use:
-`bash /Users/airm2max/Documents/DevOpsCelstn/superharness/scripts/delegate-to-codex.sh --project /Users/airm2max/Documents/DevOpsCelstn/pencil-sync --task <TASK_ID>`
+`bash /Users/user/Documents/DevOpsCelstn/superharness/scripts/delegate-to-codex.sh --project /Users/user/Documents/DevOpsCelstn/pencil-sync --task <TASK_ID>`
 
 ### Output Contract (Strict)
 For `contract today`, if at least one `todo` or `in_progress` task has `owner: codex-cli`, the final line of your response MUST be exactly:
@@ -106,4 +117,27 @@ For `delegate <TASK_ID>` or `contract delegate <TASK_ID>`, output must be:
 1. One line: `Delegating <task_id> — <task title>`
 2. Confirmation of files written (handoff path, ledger line).
 3. Final line: the exact Codex kickoff command:
-   `bash /Users/airm2max/Documents/DevOpsCelstn/superharness/scripts/delegate-to-codex.sh --project /Users/airm2max/Documents/DevOpsCelstn/pencil-sync --task <TASK_ID>`
+   `bash /Users/user/Documents/DevOpsCelstn/superharness/scripts/delegate-to-codex.sh --project /Users/user/Documents/DevOpsCelstn/pencil-sync --task <TASK_ID>`
+
+### Canonical contract today Output (Highest Priority)
+This section overrides any conflicting `contract today` formatting guidance above.
+- Output header exactly: `Contract <id> — <created date>`
+- Output next line exactly: `Goal: <goal>`
+- Render a Unicode box-drawing table (not markdown) with columns in this exact order:
+  1. `ID`
+  2. `Title`
+  3. `Status`
+  4. `Owner`
+- Include ALL tasks from contract (no truncation).
+- Render one task per single-line row; never wrap/split a task across multiple lines.
+- If content exceeds width, truncate with `...` rather than wrapping.
+- Add a full horizontal separator line between every task row (Claude-style readability).
+- Status must be emoji + text:
+  - `done` -> `✅ done`
+  - `in_progress` -> `🟡 in_progress`
+  - `todo` -> `🔲 todo`
+  - `failed` -> `❌ failed`
+  - `stale` -> `⚠️ stale`
+- If any task is `todo` or `in_progress` and owner is `codex-cli`, the final line MUST be exactly:
+  `I detected owner is codex-cli. Do you want to delegate <task_id> now?`
+  Use the first matching task in contract order.

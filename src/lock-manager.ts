@@ -115,4 +115,28 @@ export class LockManager {
   getGracePeriodMs(): number {
     return this.gracePeriodMs;
   }
+
+  /**
+   * Clean up all stale locks on startup.
+   * Call this during initialization to recover from crashes or unclean shutdowns.
+   */
+  cleanupStaleLocks(): void {
+    const now = Date.now();
+    const staleIds: string[] = [];
+
+    for (const [mappingId, acquiredAt] of this.lockTimestamps) {
+      if (now - acquiredAt > STALE_LOCK_MS) {
+        staleIds.push(mappingId);
+      }
+    }
+
+    for (const id of staleIds) {
+      log.warn(`Cleaning up stale lock for ${id} (held for ${Math.round((now - (this.lockTimestamps.get(id) ?? now)) / 1000)}s)`);
+      this.forceRelease(id);
+    }
+
+    if (staleIds.length > 0) {
+      log.info(`Cleaned up ${staleIds.length} stale lock(s) on startup`);
+    }
+  }
 }

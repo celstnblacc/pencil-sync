@@ -1,7 +1,7 @@
 # pencil-sync
 
 ![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-green)
-![Tests: 154 passing](https://img.shields.io/badge/tests-154%20passing-brightgreen)
+![Tests: 312 passing](https://img.shields.io/badge/tests-312%20passing-brightgreen)
 ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)
 
 Bidirectional sync between [Pencil.dev](https://pencil.dev) designs and frontend code, powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
@@ -18,6 +18,7 @@ Edit a component in Pencil — code updates automatically. Change code — the d
 ```bash
 npm install
 npm run build
+npm link        # makes pencil-sync available globally on PATH
 ```
 
 ## Quick Start
@@ -127,6 +128,7 @@ pencil-sync watch -c ./pencil-sync.config.json -m my-app
 pencil-sync sync -d pen-to-code     # Force design-to-code direction
 pencil-sync sync -d code-to-pen     # Force code-to-design direction
 pencil-sync sync -m my-app          # Sync a specific mapping only
+pencil-sync sync -n                 # Dry run: preview what would change without writing files
 ```
 
 ## Configuration
@@ -355,7 +357,12 @@ npm run build        # Build for production
 
 ## Docker
 
+The container runs as the unprivileged `node` user (UID 1000). On Linux hosts, ensure the mounted project directory is owned by UID 1000:
+
 ```bash
+# Linux: set ownership before running
+sudo chown -R 1000:1000 /path/to/my-project
+
 docker build -t pencil-sync .
 docker run -v $(pwd):/project pencil-sync watch --config /project/pencil-sync.config.json
 ```
@@ -376,7 +383,7 @@ src/
   config.ts              Config loading, framework/styling auto-detection
   watcher.ts             Chokidar file watching with debounced triggers
   logger.ts              Colored timestamped logging
-  __tests__/             154 tests across 10 test files (vitest)
+  __tests__/             312 tests across 19 test files (vitest)
 prompts/
   pen-to-code.md         Template for design-to-code prompts
   code-to-pen.md         Template for code-to-design prompts
@@ -389,4 +396,4 @@ pencil.dev, claude code, design to code, code to design, .pen files, bidirection
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)

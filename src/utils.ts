@@ -1,6 +1,10 @@
 import { resolve, relative, isAbsolute, sep } from "node:path";
 import type { MappingConfig } from "./types.js";
 
+export function extractErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Find the first .css file in a mapping's styleFiles list.
  */

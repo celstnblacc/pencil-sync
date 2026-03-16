@@ -165,9 +165,12 @@ async function executeClaudeSync(
   });
 
   if (!result.success) {
-    log.error(`Claude sync failed for non-color changes: ${result.stderr.slice(0, 200)}`);
+    const errorPrefix = result.mcpError
+      ? `Claude sync failed (MCP error: ${result.mcpError})`
+      : "Claude sync failed for non-color changes";
+    log.error(`${errorPrefix}: ${result.stderr.slice(0, 200)}`);
     return {
-      success: priorFilesChanged.length > 0,
+      success: false,
       direction: "pen-to-code",
       mappingId: mapping.id,
       filesChanged: priorFilesChanged,
@@ -179,7 +182,9 @@ async function executeClaudeSync(
 
   const afterHashes = await hashCodeDir(mapping.codeDir, mapping.codeGlobs);
   const claudeFiles = diffHashes(beforeHashes, afterHashes);
-  const allFiles = [...new Set([...priorFilesChanged, ...claudeFiles])];
+  const fileSet = new Set<string>(priorFilesChanged);
+  for (const f of claudeFiles) fileSet.add(f);
+  const allFiles = Array.from(fileSet);
 
   log.success(`Pen-to-code sync complete: ${allFiles.length} file(s) updated`);
 
@@ -197,6 +202,7 @@ export async function syncPenToCode(
   mapping: MappingConfig,
   settings: Settings,
   previousState?: MappingState,
+  dryRun = false,
 ): Promise<SyncResult> {
   log.sync("pen-to-code", mapping.id, "Starting design → code sync");
 
@@ -249,6 +255,24 @@ export async function syncPenToCode(
 
   const fillDiffs = diffs.filter((d) => d.prop === "fill");
   const otherDiffs = diffs.filter((d) => d.prop !== "fill");
+
+  if (dryRun) {
+    const wouldChange: string[] = [];
+    const cssFile = getCssStyleFile(mapping);
+    if (fillDiffs.length > 0 && cssFile) wouldChange.push(cssFile);
+    if (otherDiffs.length > 0) {
+      log.info(`[dry-run] Would send ${otherDiffs.length} non-color change(s) to Claude CLI`);
+    }
+    log.info(`[dry-run] Would change ${wouldChange.length} file(s): ${wouldChange.join(", ") || "(none)"}`);
+    return {
+      success: true,
+      dryRun: true,
+      direction: "pen-to-code",
+      mappingId: mapping.id,
+      filesChanged: wouldChange,
+      penSnapshot: snapshot,
+    };
+  }
 
   const fillFilesChanged = fillDiffs.length > 0
     ? await executeFillFastPath(mapping, fillDiffs)

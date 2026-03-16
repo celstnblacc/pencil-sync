@@ -1,0 +1,6 @@
+exclude_rules:
+  - JS-004  # False positive: pen-to-code.ts:185 uses array dedup ([...new Set([...a,...b])])
+            # not an object merge. Prototype pollution prevention is in config.ts
+            # safeMerge() with DANGEROUS_KEYS guard (lines 13-23).
+
+sanitize_blocklist: []

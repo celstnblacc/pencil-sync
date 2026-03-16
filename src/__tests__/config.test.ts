@@ -250,4 +250,130 @@ describe("loadConfig", () => {
     expect(config.settings.model).toBe("claude-sonnet-4-6");
     expect(config.settings.debounceMs).toBe(2000);
   });
+
+  it("prevents path traversal in penFile", async () => {
+    const configPath = join(dir, "pencil-sync.config.json");
+    await writeFile(configPath, JSON.stringify({
+      mappings: [{
+        id: "escape",
+        penFile: "../../../../../../etc/passwd",
+        codeDir: "code",
+        codeGlobs: ["**/*.tsx"],
+        direction: "both",
+      }],
+    }));
+
+    await expect(loadConfig(configPath)).rejects.toThrow(/outside config directory/i);
+  });
+
+  it("prevents path traversal in codeDir", async () => {
+    const configPath = join(dir, "pencil-sync.config.json");
+    await writeFile(configPath, JSON.stringify({
+      mappings: [{
+        id: "escape",
+        penFile: "design.pen",
+        codeDir: "../../../../../../../tmp/evil",
+        codeGlobs: ["**/*.tsx"],
+        direction: "both",
+      }],
+    }));
+
+    await expect(loadConfig(configPath)).rejects.toThrow(/outside config directory/i);
+  });
+
+  it("prevents path traversal in stateFile", async () => {
+    const configPath = join(dir, "pencil-sync.config.json");
+    await writeFile(configPath, JSON.stringify({
+      mappings: [{
+        id: "test",
+        penFile: "d.pen",
+        codeDir: "code",
+        codeGlobs: ["**/*.tsx"],
+        direction: "both",
+      }],
+      settings: {
+        stateFile: "../../../../../../../../tmp/evil-state.json",
+      },
+    }));
+
+    await expect(loadConfig(configPath)).rejects.toThrow(/outside config directory/i);
+  });
+
+  it("allows valid relative paths within config directory", async () => {
+    await mkdir(join(dir, "subdir"));
+    const configPath = join(dir, "pencil-sync.config.json");
+    await writeFile(configPath, JSON.stringify({
+      mappings: [{
+        id: "test",
+        penFile: "subdir/design.pen",
+        codeDir: "code",
+        codeGlobs: ["**/*.tsx"],
+        direction: "both",
+      }],
+      settings: {
+        stateFile: "subdir/state.json",
+      },
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.mappings[0].penFile).toContain("subdir/design.pen");
+    expect(config.settings.stateFile).toContain("subdir/state.json");
+  });
+
+  it("preserves // in JSON strings when stripping JSONC comments", async () => {
+    const configPath = join(dir, "pencil-sync.config.jsonc");
+    await writeFile(configPath, `{
+      // This is a comment
+      "version": 1,
+      "mappings": [{
+        "id": "main",
+        "penFile": "design.pen",
+        "codeDir": "code",
+        "codeGlobs": ["**/*.tsx"],
+        "direction": "both",
+        "note": "URL: https://example.com/path // not a comment"
+      }]
+    }`);
+
+    const config = await loadConfig(configPath);
+    expect((config.mappings[0] as Record<string, unknown>).note).toBe("URL: https://example.com/path // not a comment");
+  });
+
+  it("preserves /* in JSON strings when stripping JSONC comments", async () => {
+    const configPath = join(dir, "pencil-sync.config.jsonc");
+    await writeFile(configPath, `{
+      /* block comment */
+      "version": 1,
+      "mappings": [{
+        "id": "main",
+        "penFile": "design.pen",
+        "codeDir": "code",
+        "codeGlobs": ["**/*.tsx"],
+        "direction": "both",
+        "regex": "match /* wildcard */ pattern"
+      }]
+    }`);
+
+    const config = await loadConfig(configPath);
+    expect((config.mappings[0] as Record<string, unknown>).regex).toBe("match /* wildcard */ pattern");
+  });
+
+  it("preserves escaped quotes in strings when stripping JSONC comments", async () => {
+    const configPath = join(dir, "pencil-sync.config.jsonc");
+    await writeFile(configPath, `{
+      // comment
+      "version": 1,
+      "mappings": [{
+        "id": "main",
+        "penFile": "design.pen",
+        "codeDir": "code",
+        "codeGlobs": ["**/*.tsx"],
+        "direction": "both",
+        "text": "She said \\"hello // world\\""
+      }]
+    }`);
+
+    const config = await loadConfig(configPath);
+    expect(config.mappings[0].text).toBe('She said "hello // world"');
+  });
 });
