@@ -20,6 +20,7 @@
   ],
   "files": [
     "dist/",
+    "!dist/__tests__/",
     "prompts/",
     "README.md",
     "LICENSE"
