@@ -23,4 +23,4 @@ jobs:
         run: pip install shipguard==0.3.2
 
       - name: Run ShipGuard scan
-        run: shipguard scan . --format terminal --fail-on high
+        run: shipguard scan . --format terminal --severity high
