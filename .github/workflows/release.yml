@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options: [patch, minor, major]
+      dry_run:
+        description: 'Dry run — compute version and run tests but skip commit/tag/push'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    name: Bump version, tag, and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # push version-bump commit and tag to main
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite
+        run: npm test
+
+      - name: Compute new version
+        id: version
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "${{ inputs.bump }}" in
+            major) NEW="$((MAJOR + 1)).0.0" ;;
+            minor) NEW="${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) NEW="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+          esac
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW"         >> "$GITHUB_OUTPUT"
+          echo "tag=v${NEW}"      >> "$GITHUB_OUTPUT"
+
+      - name: Show release plan
+        run: |
+          echo "================================================"
+          echo "  Release plan"
+          echo "  bump type : ${{ inputs.bump }}"
+          echo "  current   : ${{ steps.version.outputs.current }}"
+          echo "  new       : ${{ steps.version.outputs.new }}"
+          echo "  tag       : ${{ steps.version.outputs.tag }}"
+          echo "  dry run   : ${{ inputs.dry_run }}"
+          echo "================================================"
+
+      - name: Bump version in package.json
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${{ steps.version.outputs.new }}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          node -p "require('./package.json').version"  # sanity-check
+
+      - name: Commit, tag, and push
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore(release): bump version ${{ steps.version.outputs.current }} → ${{ steps.version.outputs.new }}"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin HEAD:main
+          git push origin "${{ steps.version.outputs.tag }}"
+          echo "✅ Pushed tag ${{ steps.version.outputs.tag }} — publish.yml will now build and upload to npm"
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "DRY RUN complete — no commit, tag, or push performed."
+          echo "Would have released: ${{ steps.version.outputs.current }} → ${{ steps.version.outputs.new }}"
