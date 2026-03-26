@@ -47,3 +47,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Chore
 - CLAUDE.md: protect against accidental deletion of youtube-model-feeder source project
+
+## [0.1.3] — 2026-03-26
+
+### Chore
+- Add `AGENTS.md` scaffold (agent protocol compliance)
+- Update `package-lock.json` lockfile
