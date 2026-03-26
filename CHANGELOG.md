@@ -39,3 +39,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - JSONC config support (comments in JSON config files)
 - Docker support
 - 308 tests across 18 test files (Vitest)
+
+## [0.1.2] — 2026-03-26
+
+### Fixed
+- CI: replace `--fail-on high` with `--severity high` in ShipGuard Security workflow — `--fail-on` is not a valid flag (caused exit code 2 on every run)
+
+### Chore
+- CLAUDE.md: protect against accidental deletion of youtube-model-feeder source project
