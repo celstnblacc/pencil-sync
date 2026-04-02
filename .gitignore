@@ -36,3 +36,4 @@ shipguard.txt
 .git_new/
 !.env.example
 # codex-pii-guard:end
+.serena/
