@@ -56,6 +56,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+- 2026-07-21: docs: align CODE_OF_CONDUCT.md with concise 5-line CoC (replaces Contributor Covenant boilerplate with internal style)
 ### Fixed
 - Budget pre-flight now projects output-token cost (3× input, conservative), not just input — a large generation can no longer slip past `maxBudgetUsd`
 - Claude CLI token usage falls back to a length-based estimate (with a warning) when `--verbose` output can't be parsed, instead of silently recording zero spend and disabling budget enforcement entirely
